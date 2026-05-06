@@ -214,3 +214,26 @@ class Loop(_Loop):
             executor.shutdown(wait=False)
         else:
             thread.join()
+
+    async def create_server(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        host: str|None = None, port: int|None = None, *,
+        family: int = 0, flags: int = 0, sock: Any = None,
+        backlog: int = 100, ssl: Any = None,
+        reuse_address: bool|None = None, reuse_port: bool|None = None,
+        ssl_handshake_timeout: float|None = None,
+        ssl_shutdown_timeout: float|None = None,
+        start_serving: bool = True,
+    ) -> "Server":
+        from .server import Server
+        if ssl is not None:
+            raise NotImplementedError("SSL is not supported yet")
+        srv = await _Loop.create_server(
+            self, protocol_factory, host, port,
+            family=family, flags=flags, sock=sock, backlog=backlog,
+            reuse_address=reuse_address, reuse_port=reuse_port,
+        )
+        server = Server(self, [srv])
+        if hasattr(srv, 'server_ref'):
+            srv.server_ref = server
+        return server

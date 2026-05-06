@@ -140,6 +140,13 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Open a streaming transport connection to a given address specified by host and port.\x00",
         .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
     },
+    // --------------------- Socket server ---------------------
+    python_c.PyMethodDef{
+        .ml_name = "create_server\x00",
+        .ml_meth = @ptrCast(&IO.Server.create_server.loop_create_server),
+        .ml_doc = "Create a TCP server.\x00",
+        .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
+    },
     // python_c.PyMethodDef{
     //     .ml_name = "remove_writer\x00",
     //     .ml_meth = @ptrCast(&Watchers.loop_remove_writer),
