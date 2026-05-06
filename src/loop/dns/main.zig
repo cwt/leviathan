@@ -165,8 +165,8 @@ test "get_cache_slot distributes hostnames across slots" {
     }
 
     // Check that not all slots are the same
-    var unique_slots = std.ArrayList(*Cache).init(std.testing.allocator);
-    defer unique_slots.deinit();
+    var unique_slots = std.ArrayList(*Cache){};
+    defer unique_slots.deinit(std.testing.allocator);
 
     loop: for (slots) |slot| {
         for (unique_slots.items) |existing_slot| {
@@ -174,7 +174,7 @@ test "get_cache_slot distributes hostnames across slots" {
                 continue :loop;
             }
         }
-        try unique_slots.append(slot);
+        try unique_slots.append(std.testing.allocator, slot);
     }
 
     try std.testing.expect(unique_slots.items.len > 1);
@@ -208,8 +208,8 @@ test "get_cache_slot handles different hostname lengths" {
     }
 
     // Check that different length hostnames can map to different slots
-    var unique_slots = std.ArrayList(*Cache).init(std.testing.allocator);
-    defer unique_slots.deinit();
+    var unique_slots = std.ArrayList(*Cache){};
+    defer unique_slots.deinit(std.testing.allocator);
 
     loop: for (slots) |slot| {
         for (unique_slots.items) |existing_slot| {
@@ -217,7 +217,7 @@ test "get_cache_slot handles different hostname lengths" {
                 continue :loop;
             }
         }
-        try unique_slots.append(slot);
+        try unique_slots.append(std.testing.allocator, slot);
     }
 
     try std.testing.expect(unique_slots.items.len > 1);
