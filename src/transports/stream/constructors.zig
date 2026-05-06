@@ -209,15 +209,15 @@ inline fn z_stream_new(@"type": *python_c.PyTypeObject) !*StreamTransportObject 
 pub fn stream_new(
     @"type": ?*python_c.PyTypeObject, _: ?PyObject,
     _: ?PyObject
-) callconv(.C) ?*StreamTransportObject {
+) callconv(.c) ?*StreamTransportObject {
     return utils.execute_zig_function(z_stream_new, .{@"type".?});
 }
  
-pub fn stream_traverse(self: ?*StreamTransportObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.C) c_int {
+pub fn stream_traverse(self: ?*StreamTransportObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
     return python_c.py_visit(self.?, visit, arg);
 }
 
-pub fn stream_clear(self: ?*StreamTransportObject) callconv(.C) c_int {
+pub fn stream_clear(self: ?*StreamTransportObject) callconv(.c) c_int {
     const py_transport = self.?;
     const write_transport_data = utils.get_data_ptr2(WriteTransport, "write_transport", py_transport);
     if (write_transport_data.initialized) {
@@ -245,7 +245,7 @@ pub fn stream_clear(self: ?*StreamTransportObject) callconv(.C) c_int {
     return 0;
 }
 
-pub fn stream_dealloc(self: ?*StreamTransportObject) callconv(.C) void {
+pub fn stream_dealloc(self: ?*StreamTransportObject) callconv(.c) void {
     const instance = self.?;
 
     python_c.PyObject_GC_UnTrack(instance);
@@ -289,6 +289,6 @@ inline fn z_stream_init(self: *StreamTransportObject, args: ?PyObject, kwargs: ?
     return 0;
 }
 
-pub fn stream_init(self: ?*StreamTransportObject, args: ?PyObject, kwargs: ?PyObject) callconv(.C) c_int {
+pub fn stream_init(self: ?*StreamTransportObject, args: ?PyObject, kwargs: ?PyObject) callconv(.c) c_int {
     return utils.execute_zig_function(z_stream_init, .{self.?, args, kwargs});
 }

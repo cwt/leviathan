@@ -117,11 +117,11 @@ pub fn read_operation_completed(read_transport: *ReadTransport, data: []const u8
     }
 }
 
-pub fn transport_is_reading(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_is_reading(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     return python_c.PyBool_FromLong(@intCast(@intFromBool(self.?.is_reading)));
 }
 
-pub fn transport_pause_reading(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_pause_reading(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     if (instance.closed) {
@@ -142,7 +142,7 @@ pub fn transport_pause_reading(self: ?*StreamTransportObject) callconv(.C) ?PyOb
     return python_c.get_py_none();
 }
 
-pub fn transport_resume_reading(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_resume_reading(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     if (instance.closed) {

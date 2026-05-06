@@ -103,13 +103,13 @@ inline fn z_future_add_done_callback(
 
 pub fn future_add_done_callback(
     self: ?*PythonFutureObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_future_add_done_callback, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames
     });
 }
 
-pub fn future_remove_done_callback(self: ?*PythonFutureObject, callback: ?PyObject) callconv(.C) ?PyObject {
+pub fn future_remove_done_callback(self: ?*PythonFutureObject, callback: ?PyObject) callconv(.c) ?PyObject {
     const future_data = utils.get_data_ptr(Future, self.?);
     const removed_count = Future.Callback.remove_done_callback(
         future_data, @intCast(@intFromPtr(callback.?))

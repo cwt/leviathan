@@ -47,14 +47,14 @@ inline fn z_loop_new(@"type": *python_c.PyTypeObject) !*LoopObject {
 pub fn loop_new(
     @"type": ?*python_c.PyTypeObject, _: ?PyObject,
     _: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     const self = utils.execute_zig_function(
         z_loop_new, .{@"type".?}
     );
     return @ptrCast(self);
 }
 
-pub fn loop_clear(self: ?*LoopObject) callconv(.C) c_int {
+pub fn loop_clear(self: ?*LoopObject) callconv(.c) c_int {
     const py_loop = self.?;
     const loop_data = utils.get_data_ptr(Loop, py_loop);
     if (loop_data.initialized) {
@@ -65,11 +65,11 @@ pub fn loop_clear(self: ?*LoopObject) callconv(.C) c_int {
     return 0;
 }
 
-pub fn loop_traverse(self: ?*LoopObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.C) c_int {
+pub fn loop_traverse(self: ?*LoopObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
     return python_c.py_visit(self.?, visit, arg);
 }
 
-pub fn loop_dealloc(self: ?*LoopObject) callconv(.C) void {
+pub fn loop_dealloc(self: ?*LoopObject) callconv(.c) void {
     const instance = self.?;
 
     python_c.PyObject_GC_UnTrack(instance);
@@ -116,7 +116,7 @@ inline fn z_loop_init(
 
 pub fn loop_init(
     self: ?*LoopObject, args: ?PyObject, kwargs: ?PyObject
-) callconv(.C) c_int {
+) callconv(.c) c_int {
     return utils.execute_zig_function(z_loop_init, .{self.?, args, kwargs});
 }
 

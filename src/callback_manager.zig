@@ -115,7 +115,7 @@ pub const CallbacksSetsQueue = struct {
         }
 
         try new_node.data.init(self.queue.allocator, extra_capacity);
-        errdefer new_node.data.deinit();
+        errdefer new_node.data.deinit(self.queue.allocator);
 
         self.queue.append_node(new_node);
         if (self.first_set == null) {
@@ -484,7 +484,7 @@ test "Handle exceptions during callback execution" {
 test "Reduce callback sets when maximum capacity is 1" {
     const allocator = std.testing.allocator;
 
-    var set_queue = CallbacksSetsQueue.init(allocator);
+    var set_queue = CallbacksSetsQueue.init(std.testing.allocator);
     defer {
         for (0..set_queue.queue.len) |_| {
             const set: CallbacksSet = set_queue.queue.pop() catch unreachable;
@@ -517,7 +517,7 @@ test "Reduce callback sets when maximum capacity is 1" {
 test "Reduce callback sets with maximum capacity greater than 1" {
     const allocator = std.testing.allocator;
 
-    var set_queue = CallbacksSetsQueue.init(allocator);
+    var set_queue = CallbacksSetsQueue.init(std.testing.allocator);
     defer {
         for (0..set_queue.queue.len) |_| {
             const set: CallbacksSet = set_queue.queue.pop() catch unreachable;
@@ -550,7 +550,7 @@ test "Reduce callback sets with maximum capacity greater than 1" {
 test "Maintain callback sets when pruning limit is high" {
     const allocator = std.testing.allocator;
 
-    var set_queue = CallbacksSetsQueue.init(allocator);
+    var set_queue = CallbacksSetsQueue.init(std.testing.allocator);
     defer {
         for (0..set_queue.queue.len) |_| {
             const set: CallbacksSet = set_queue.queue.pop() catch unreachable;
@@ -583,7 +583,7 @@ test "Maintain callback sets when pruning limit is high" {
 test "Execute callbacks and then prune sets" {
     const allocator = std.testing.allocator;
 
-    var set_queue = CallbacksSetsQueue.init(allocator);
+    var set_queue = CallbacksSetsQueue.init(std.testing.allocator);
     defer {
         for (0..set_queue.queue.len) |_| {
             const set: CallbacksSet = set_queue.queue.pop() catch unreachable;

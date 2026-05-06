@@ -76,11 +76,11 @@ inline fn z_timer_handle_init(
     return 0;
 }
 
-fn handle_init(self: ?*PythonTimerHandleObject, args: ?PyObject, kwargs: ?PyObject) callconv(.C) c_int {
+fn handle_init(self: ?*PythonTimerHandleObject, args: ?PyObject, kwargs: ?PyObject) callconv(.c) c_int {
     return utils.execute_zig_function(z_timer_handle_init, .{self.?, args, kwargs});
 }
 
-pub fn timer_handle_when(self: ?*PythonTimerHandleObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn timer_handle_when(self: ?*PythonTimerHandleObject, _: ?PyObject) callconv(.c) ?PyObject {
     const time = self.?.when;
     const when = @as(f64, @floatFromInt(time.sec)) + @as(f64, @floatFromInt(time.nsec)) / std.time.ns_per_s;
     return python_c.PyFloat_FromDouble(when);

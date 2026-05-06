@@ -27,7 +27,7 @@ pub inline fn future_fast_cancel(instance: *PythonFutureObject, data: *Future, c
 
 pub fn future_cancel(
     self: ?*PythonFutureObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     if (nargs != 0) {
         python_c.raise_python_value_error("Invalid number of arguments\x00");
         return null;
@@ -54,7 +54,7 @@ pub fn future_cancel(
     return python_c.PyBool_FromLong(@intCast(@intFromBool(ret)));
 }
 
-pub fn future_cancelled(self: ?*PythonFutureObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn future_cancelled(self: ?*PythonFutureObject, _: ?PyObject) callconv(.c) ?PyObject {
     const future_data = utils.get_data_ptr(Future, self.?);
     return switch (future_data.status) {
         .canceled => python_c.get_py_true(),

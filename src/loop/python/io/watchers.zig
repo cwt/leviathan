@@ -231,7 +231,7 @@ inline fn z_loop_add_watcher(
 
 pub fn loop_add_reader(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_loop_add_watcher, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))],
         Loop.Scheduling.IO.BlockingOperation.WaitReadable
@@ -240,7 +240,7 @@ pub fn loop_add_reader(
 
 pub fn loop_add_writer(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_loop_add_watcher, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))],
         Loop.Scheduling.IO.BlockingOperation.WaitWritable
@@ -300,7 +300,7 @@ inline fn z_loop_remove_watcher(
 
 pub fn loop_remove_reader(
     self: ?*LoopObject, py_fd: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_loop_remove_watcher, .{
         self.?, py_fd.?, Loop.Scheduling.IO.BlockingOperation.WaitReadable
     });
@@ -308,7 +308,7 @@ pub fn loop_remove_reader(
 
 pub fn loop_remove_writer(
     self: ?*LoopObject, py_fd: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_loop_remove_watcher, .{
         self.?, py_fd.?, Loop.Scheduling.IO.BlockingOperation.WaitWritable
     });

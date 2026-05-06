@@ -23,7 +23,7 @@ blocking_task_id: usize = 0,
 
 signalfd_info: std.os.linux.signalfd_siginfo = undefined,
 
-fn dummy_signal_handler(_: c_int) callconv(.C) void {
+fn dummy_signal_handler(_: c_int) callconv(.c) void {
     // std.log.info("Dummy signal handler", .{});
 }
 
@@ -120,7 +120,7 @@ pub fn link(self: *UnixSignals, sig: u6, callback: CallbackManager.Callback) !vo
     _ = c.signal(@intCast(sig), &dummy_signal_handler);
 
     const mask = &self.mask;
-    std.os.linux.sigaddset(mask, sig);
+    std.posix.sigaddset(mask, sig);
     std.posix.sigprocmask(std.os.linux.SIG.BLOCK, mask, null);
     _ = c.siginterrupt(@intCast(sig), 0);
 
@@ -156,12 +156,12 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
             }
         },
         else => {
-            var mask: std.posix.sigset_t = std.posix.empty_sigset;
+            var mask: std.posix.sigset_t = std.posix.sigemptyset();
 
-            std.os.linux.sigaddset(&mask, sig);
+            std.posix.sigaddset(&mask, sig);
             std.posix.sigprocmask(std.os.linux.SIG.UNBLOCK, &mask, null);
 
-            std.os.linux.sigdelset(&self.mask, sig);
+            std.posix.sigdelset(&self.mask, sig);
             self.fd = try std.posix.signalfd(self.fd, &self.mask, 0);
             _ = c.signal(@intCast(sig), c.SIG_DFL);
             _ = c.siginterrupt(@intCast(sig), 1);
@@ -176,7 +176,7 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
 }
 
 pub fn init(loop: *Loop) !void {
-    var mask: std.posix.sigset_t = std.posix.empty_sigset;
+    var mask: std.posix.sigset_t = std.posix.sigemptyset();
     const fd = try std.posix.signalfd(-1, &mask, 0);
     errdefer std.posix.close(fd);
 
@@ -203,12 +203,12 @@ pub fn deinit(self: *UnixSignals) void {
     std.posix.close(self.fd);
     const loop = self.loop;
 
-    var mask: std.posix.sigset_t = std.posix.empty_sigset;
+    var mask: std.posix.sigset_t = std.posix.sigemptyset();
 
     while (true) {
         var sig: u6 = undefined;
         var value = self.callbacks.pop(&sig) orelse break;
-        std.os.linux.sigaddset(&mask, sig);
+        std.posix.sigaddset(&mask, sig);
 
         _ = c.signal(@intCast(sig), c.SIG_DFL);
         value.data.cancelled = true;

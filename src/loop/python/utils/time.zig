@@ -8,7 +8,7 @@ const Loop = @import("../../main.zig");
 const std = @import("std");
 
 
-pub fn loop_time(self: ?*Loop.Python.LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn loop_time(self: ?*Loop.Python.LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     _ = self.?;
 
     const time = std.posix.clock_gettime(.MONOTONIC) catch |err| {

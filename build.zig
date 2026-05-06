@@ -10,25 +10,29 @@ fn create_build_step(
     modules_name: []const []const u8,
     modules: []const *std.Build.Module,
     comptime emit_bin: bool,
-    step: *std.Build.Step
+    step: *std.Build.Step,
 ) void {
-    const lib = b.addSharedLibrary(.{
-        .name = name,
-        .optimize = optimize,
-        .target = target,
+    const root_module = b.createModule(.{
         .root_source_file = b.path(path),
+        .target = target,
+        .optimize = optimize,
         .single_threaded = single_threaded,
+        .link_libc = true,
     });
-
-    lib.linkLibC();
     for (modules_name, modules) |module_name, module| {
-        lib.root_module.addImport(module_name, module);
+        root_module.addImport(module_name, module);
     }
+
+    const lib = b.addLibrary(.{
+        .name = name,
+        .linkage = .dynamic,
+        .root_module = root_module,
+    });
 
     if (emit_bin) {
         const compile_python_lib = b.addInstallArtifact(lib, .{});
         step.dependOn(&compile_python_lib.step);
-    }else{
+    } else {
         step.dependOn(&lib.step);
     }
 }
@@ -39,12 +43,11 @@ pub fn build(b: *std.Build) void {
 
     if (target.result.os.tag != .linux) {
         @panic("Only Linux is supported");
-    }else if (target.result.os.isAtLeast(.linux, .{ .major = 5, .minor = 11, .patch = 0 })) |_is_at_least| {
-        if (!_is_at_least) {
+    }
+    if (target.result.os.isAtLeast(.linux, .{ .major = 5, .minor = 11, .patch = 0 })) |is_at_least| {
+        if (!is_at_least) {
             @panic("Only Linux >= 5.1.0 is supported");
         }
-    }else{
-        @panic("Not able to detect Linux version");
     }
 
     const python_include_dir = b.option([]const u8, "python-include-dir", "Path to python include directory")
@@ -52,47 +55,41 @@ pub fn build(b: *std.Build) void {
 
     const python_lib_dir = b.option([]const u8, "python-lib-dir", "Path to python library directory");
 
-    const python_lib= b.option([]const u8, "python-lib", "Name of the python library")
-        orelse "/usr/lib/libpython3.13.so";
+    const python_lib = b.option([]const u8, "python-lib", "Path to the python shared library");
 
     const python_is_gil_disabled = b.option(bool, "python-gil-disabled", "Is GIL disabled")
         orelse false;
-
-    const jdz_allocator = b.dependency("jdz_allocator", .{
-        .target = target,
-        .optimize = optimize
-    });
-    const jdz_allocator_module = jdz_allocator.module("jdz_allocator");
 
     const python_c_module = b.addModule("python_c", .{
         .root_source_file = b.path("src/python_c.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true
+        .link_libc = true,
     });
 
     python_c_module.addIncludePath(.{
-        .cwd_relative = python_include_dir
+        .cwd_relative = python_include_dir,
     });
 
     if (python_lib_dir) |dir| {
         python_c_module.addLibraryPath(.{
-            .cwd_relative = dir
+            .cwd_relative = dir,
         });
     }
 
-    python_c_module.addObjectFile(.{
-        .cwd_relative = python_lib
-    });
+    if (python_lib) |lib| {
+        python_c_module.addObjectFile(.{
+            .cwd_relative = lib,
+        });
+    }
 
     const utils_module = b.addModule("utils", .{
         .root_source_file = b.path("src/utils/main.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true
+        .link_libc = true,
     });
     utils_module.addImport("python_c", python_c_module);
-    utils_module.addImport("jdz_allocator", jdz_allocator_module);
 
     const callback_manager_module = b.addModule("callback_manager", .{
         .root_source_file = b.path("src/callback_manager.zig"),
@@ -111,48 +108,63 @@ pub fn build(b: *std.Build) void {
     leviathan_module.addImport("utils", utils_module);
     leviathan_module.addImport("callback_manager", callback_manager_module);
 
-    const modules_name = .{ "leviathan", "python_c", "jdz_allocator", "utils" };
-    const modules = .{ leviathan_module, python_c_module, jdz_allocator_module, utils_module };
+    const modules_name = .{ "leviathan", "python_c", "utils" };
+    const modules = .{ leviathan_module, python_c_module, utils_module };
     const install_step = b.getInstallStep();
 
     create_build_step(
         b, "leviathan", "src/lib.zig", target, optimize, !python_is_gil_disabled,
-        &modules_name, &modules, true, install_step
+        &modules_name, &modules, true, install_step,
     );
 
     const check_step = b.step("check", "Run checking for ZLS");
     create_build_step(
         b, "leviathan", "src/lib.zig", target, optimize, true,
-        &modules_name, &modules, false, check_step
+        &modules_name, &modules, false, check_step,
     );
 
     const leviathan_module_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .single_threaded = !python_is_gil_disabled
+        .name = "leviathan",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = !python_is_gil_disabled,
+            .imports = &.{
+                .{ .name = "callback_manager", .module = callback_manager_module },
+                .{ .name = "python_c", .module = python_c_module },
+                .{ .name = "utils", .module = utils_module },
+            },
+        }),
     });
-    leviathan_module_unit_tests.root_module.addImport("callback_manager", callback_manager_module);
-    leviathan_module_unit_tests.root_module.addImport("python_c", python_c_module);
-    leviathan_module_unit_tests.root_module.addImport("utils", utils_module);
 
     const utils_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/utils/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .single_threaded = !python_is_gil_disabled
+        .name = "utils",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/utils/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = !python_is_gil_disabled,
+            .imports = &.{
+                .{ .name = "python_c", .module = python_c_module },
+                .{ .name = "utils", .module = utils_module },
+            },
+        }),
     });
-    utils_unit_tests.root_module.addImport("python_c", python_c_module);
-    utils_unit_tests.root_module.addImport("utils", utils_module);
 
     const callback_manager_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/callback_manager.zig"),
-        .target = target,
-        .optimize = optimize,
-        .single_threaded = !python_is_gil_disabled
+        .name = "callback_manager",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/callback_manager.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = !python_is_gil_disabled,
+            .imports = &.{
+                .{ .name = "python_c", .module = python_c_module },
+                .{ .name = "utils", .module = utils_module },
+            },
+        }),
     });
-    callback_manager_unit_tests.root_module.addImport("python_c", python_c_module);
-    callback_manager_unit_tests.root_module.addImport("utils", utils_module);
 
     const run_leviathan_module_unit_tests = b.addRunArtifact(leviathan_module_unit_tests);
     const run_callback_manager_unit_tests = b.addRunArtifact(callback_manager_unit_tests);

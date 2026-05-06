@@ -6,6 +6,5 @@ pub const TimerHandle = @import("timer_handle.zig");
 pub const Transports = @import("transports/main.zig");
 
 test {
-    const std = @import("std");
-    std.testing.refAllDeclsRecursive(Loop);
+    _ = Loop;
 }

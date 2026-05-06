@@ -11,20 +11,20 @@ const std = @import("std");
 
 pub fn task_not_implemented_method(
     _: ?*Task.PythonTaskObject, _: ?PyObject, _: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     python_c.PyErr_SetString(python_c.PyExc_NotImplementedError.?, "This method is not supported for tasks\x00");
     return null;
 }
 
-pub fn task_get_coro(self: ?*Task.PythonTaskObject) callconv(.C) ?PyObject {
+pub fn task_get_coro(self: ?*Task.PythonTaskObject) callconv(.c) ?PyObject {
     return python_c.py_newref(self.?.coro);
 }
 
-pub fn task_get_context(self: ?*Task.PythonTaskObject) callconv(.C) ?PyObject {
+pub fn task_get_context(self: ?*Task.PythonTaskObject) callconv(.c) ?PyObject {
     return python_c.py_newref(self.?.py_context);
 }
 
-pub fn task_get_name(self: ?*Task.PythonTaskObject) callconv(.C) ?PyObject {
+pub fn task_get_name(self: ?*Task.PythonTaskObject) callconv(.c) ?PyObject {
     const instance = self.?;
     if (instance.name) |name| {
         return python_c.py_newref(name);
@@ -47,7 +47,7 @@ pub fn task_get_name(self: ?*Task.PythonTaskObject) callconv(.C) ?PyObject {
     return python_c.py_newref(py_name);
 }
 
-pub fn task_set_name(self: ?*Task.PythonTaskObject, args: ?PyObject) callconv(.C) ?PyObject {
+pub fn task_set_name(self: ?*Task.PythonTaskObject, args: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     var name: ?PyObject = null;
@@ -59,7 +59,7 @@ pub fn task_set_name(self: ?*Task.PythonTaskObject, args: ?PyObject) callconv(.C
     return python_c.get_py_none();
 }
 
-pub fn task_get_stack(self: ?*Task.PythonTaskObject, args: ?PyObject, kwargs: ?PyObject) callconv(.C) ?PyObject {
+pub fn task_get_stack(self: ?*Task.PythonTaskObject, args: ?PyObject, kwargs: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     var kwlist: [2][*c]u8 = undefined;
@@ -88,7 +88,7 @@ pub fn task_get_stack(self: ?*Task.PythonTaskObject, args: ?PyObject, kwargs: ?P
     return stack;
 }
 
-pub fn task_print_stack(self: ?*Task.PythonTaskObject, args: ?PyObject, kwargs: ?PyObject) callconv(.C) ?PyObject {
+pub fn task_print_stack(self: ?*Task.PythonTaskObject, args: ?PyObject, kwargs: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     var kwlist: [3][*c]u8 = undefined;

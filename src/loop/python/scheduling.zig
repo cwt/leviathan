@@ -130,7 +130,7 @@ inline fn z_loop_call_soon(
 
 pub fn loop_call_soon(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?*Handle.PythonHandleObject {
+) callconv(.c) ?*Handle.PythonHandleObject {
     return utils.execute_zig_function(z_loop_call_soon, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames,
         false
@@ -139,7 +139,7 @@ pub fn loop_call_soon(
 
 pub fn loop_call_soon_threadsafe(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?*Handle.PythonHandleObject {
+) callconv(.c) ?*Handle.PythonHandleObject {
     return utils.execute_zig_function(z_loop_call_soon, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames,
         true
@@ -269,7 +269,7 @@ inline fn z_loop_delayed_call(
 }
 pub fn loop_call_later(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?*TimerHandle.PythonTimerHandleObject {
+) callconv(.c) ?*TimerHandle.PythonTimerHandleObject {
     return utils.execute_zig_function(z_loop_delayed_call, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames,
         false
@@ -278,7 +278,7 @@ pub fn loop_call_later(
 
 pub fn loop_call_at(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?*TimerHandle.PythonTimerHandleObject {
+) callconv(.c) ?*TimerHandle.PythonTimerHandleObject {
     
     return utils.execute_zig_function(z_loop_delayed_call, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames,

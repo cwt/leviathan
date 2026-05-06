@@ -455,7 +455,7 @@ fn build_queries(
         .control_data = control_data,
         .hostnames_array = hostnames_array,
 
-        .results = std.ArrayList(std.net.Address).init(allocator),
+        .results = std.ArrayList(std.net.Address){},
     };
 }
 

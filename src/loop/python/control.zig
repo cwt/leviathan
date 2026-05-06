@@ -49,11 +49,11 @@ inline fn z_loop_run_forever(self: *LoopObject) !PyObject {
     return python_c.get_py_none();
 }
 
-pub fn loop_run_forever(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn loop_run_forever(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_loop_run_forever, .{self.?});
 }
 
-pub fn loop_stop(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn loop_stop(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     const loop_data = utils.get_data_ptr(Loop, self.?);
 
     const mutex = &loop_data.mutex;
@@ -64,7 +64,7 @@ pub fn loop_stop(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
     return python_c.get_py_none();
 }
 
-pub fn loop_is_running(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn loop_is_running(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     const loop_data = utils.get_data_ptr(Loop, self.?);
     const mutex = &loop_data.mutex;
     mutex.lock();
@@ -73,7 +73,7 @@ pub fn loop_is_running(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject 
     return python_c.PyBool_FromLong(@intCast(@intFromBool(loop_data.running)));
 }
 
-pub fn loop_is_closed(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn loop_is_closed(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     const loop_data = utils.get_data_ptr(Loop, self.?);
 
     const mutex = &loop_data.mutex;
@@ -83,7 +83,7 @@ pub fn loop_is_closed(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
     return python_c.PyBool_FromLong(@intCast(@intFromBool(!loop_data.initialized)));
 }
 
-pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const loop_data = utils.get_data_ptr(Loop, instance);

@@ -10,7 +10,7 @@ const LoopObject = Loop.Python.LoopObject;
 
 pub fn asyncgen_firstiter_hook(
     self: ?*LoopObject, agen: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const ret: ?PyObject = python_c.PyObject_CallOneArg(instance.asyncgens_set_add.?, agen.?);
@@ -42,7 +42,7 @@ inline fn append_new_task(
 
 pub fn asyncgen_finalizer_hook(
     self: ?*LoopObject, agen: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     const instance = self.?;
     const _agen = agen.?;
 

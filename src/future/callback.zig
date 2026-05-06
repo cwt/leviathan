@@ -100,7 +100,7 @@ fn run_python_future_set_callbacks(data: *const CallbackManager.CallbackData) !v
                     utils.handle_zig_function_error(err, {});
 
                     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
-                    exceptions_array.append(exc) catch |err2| {
+                    exceptions_array.append(future.callbacks_arena_allocator, exc) catch |err2| {
                         std.debug.panic("Unexpected error while adding exception to queue: {s}", .{@errorName(err2)});
                     };
                 };
@@ -110,7 +110,7 @@ fn run_python_future_set_callbacks(data: *const CallbackManager.CallbackData) !v
                     utils.handle_zig_function_error(err, {});
 
                     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
-                    exceptions_array.append(exc) catch |err2| {
+                    exceptions_array.append(future.callbacks_arena_allocator, exc) catch |err2| {
                         std.debug.panic("Unexpected error while adding exception to queue: {s}", .{@errorName(err2)});
                     };
                 };
@@ -168,12 +168,12 @@ pub fn release_callbacks_queue(queue: *const CallbacksSetData) void {
 pub inline fn add_done_callback(self: *Future, callback_data: Data) !void {
     if (self.status != .pending) @panic("Trying to add callback when future finished");
 
-    try self.callbacks_queue.append(.{
+    try self.callbacks_queue.append(self.callbacks_arena_allocator, .{
         .data = callback_data
     });
     errdefer _ = self.exceptions_queue.pop();
 
-    try self.exceptions_queue.ensureTotalCapacity(self.callbacks_queue.items.len);
+    try self.exceptions_queue.ensureTotalCapacity(self.callbacks_arena_allocator, self.callbacks_queue.items.len);
 }
 
 pub fn remove_done_callback(self: *Future, callback_id: u64) usize {

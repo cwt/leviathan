@@ -86,11 +86,11 @@ pub fn parse_resolv_configuration(allocator: std.mem.Allocator, content: []const
     const search_tmp_buf = try allocator.alloc(u8, 255);
     defer allocator.free(search_tmp_buf);
 
-    var servers = std.ArrayList(std.net.Address).init(allocator);
-    defer servers.deinit();
+    var servers = std.ArrayList(std.net.Address){};
+    defer servers.deinit(allocator);
 
-    var search_hosts = std.ArrayList([]u8).init(allocator);
-    defer search_hosts.deinit();
+    var search_hosts = std.ArrayList([]u8){};
+    defer search_hosts.deinit(allocator);
     errdefer {
         for (search_hosts.items) |host| {
             allocator.free(host);
@@ -116,7 +116,7 @@ pub fn parse_resolv_configuration(allocator: std.mem.Allocator, content: []const
                 else => unreachable
             }
             
-            try servers.append(address);
+            try servers.append(allocator, address);
         } else if (std.mem.eql(u8, first_word, "search")) {
             while (words_iter.next()) |word| {
                 chr = word[0];
@@ -130,16 +130,16 @@ pub fn parse_resolv_configuration(allocator: std.mem.Allocator, content: []const
                 const host = try allocator.dupe(u8, parsed_hostname);
                 errdefer allocator.free(host);
 
-                try search_hosts.append(host);
+                try search_hosts.append(allocator, host);
             }
         }
     }
 
     if (servers.items.len == 0) {
-        try servers.append(try std.net.Address.parseIp("1.1.1.1", 53));
+        try servers.append(allocator, try std.net.Address.parseIp("1.1.1.1", 53));
     }
 
-    const search_hosts_slice = try search_hosts.toOwnedSlice();
+    const search_hosts_slice = try search_hosts.toOwnedSlice(allocator);
     errdefer {
         for (search_hosts_slice) |host| {
             allocator.free(host);
@@ -147,7 +147,7 @@ pub fn parse_resolv_configuration(allocator: std.mem.Allocator, content: []const
         allocator.free(search_hosts_slice);
     }
 
-    const servers_slice = try servers.toOwnedSlice();
+    const servers_slice = try servers.toOwnedSlice(allocator);
     errdefer allocator.free(servers_slice);
 
     return Configuration{

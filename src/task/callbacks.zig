@@ -561,7 +561,7 @@ fn wakeup_task(fut: ?*Future.Python.FutureObject, ptr: ?*anyopaque) !void {
 
 fn py_wake_up(
     self: ?*Task.PythonTaskObject, fut: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     const instance = self.?;
     const py_future = fut.?;
 

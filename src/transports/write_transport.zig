@@ -68,11 +68,11 @@ pub fn init(
     const busy_py_objects = try allocator.create(PyBuffersArrayList);
     errdefer allocator.destroy(busy_py_objects);
 
-    free_buffers.* = BuffersArrayList.init(allocator);
-    busy_buffers.* = BuffersArrayList.init(allocator);
+    free_buffers.* = .{};
+    busy_buffers.* = .{};
 
-    free_py_objects.* = PyBuffersArrayList.init(allocator);
-    busy_py_objects.* = PyBuffersArrayList.init(allocator);
+    free_py_objects.* = .{};
+    busy_py_objects.* = .{};
 
     self.* = WriteTransport{
         .loop = loop,
@@ -130,11 +130,11 @@ pub fn deinit(self: *WriteTransport) void {
         python_c.PyBuffer_Release(v);
     }
 
-    self.free_buffers.deinit();
-    self.free_py_buffers.deinit();
+    self.free_buffers.deinit(allocator);
+    self.free_py_buffers.deinit(allocator);
 
-    self.busy_buffers.deinit();
-    self.busy_py_buffers.deinit();
+    self.busy_buffers.deinit(allocator);
+    self.busy_py_buffers.deinit(allocator);
 
     allocator.destroy(self.free_buffers);
     allocator.destroy(self.free_py_buffers);
@@ -351,10 +351,10 @@ pub fn append_new_buffer_to_write(self: *WriteTransport, py_object: PyObject) !u
 
         const buffer_len: usize = @intCast(pbuffer.len);
 
-        try self.free_py_buffers.append(pbuffer);
+        try self.free_py_buffers.append(self.loop.allocator, pbuffer);
         errdefer _ = self.free_py_buffers.pop();
 
-        try self.free_buffers.append(.{
+        try self.free_buffers.append(self.loop.allocator, .{
             .base = @ptrCast(pbuffer.buf.?),
             .len = buffer_len
         });

@@ -90,14 +90,14 @@ inline fn z_task_new(
 pub fn task_new(
     @"type": ?*python_c.PyTypeObject, args: ?PyObject,
     kwargs: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     const self = utils.execute_zig_function(
         z_task_new, .{@"type".?, args, kwargs}
     );
     return @ptrCast(self);
 }
 
-pub fn task_clear(self: ?*PythonTaskObject) callconv(.C) c_int {
+pub fn task_clear(self: ?*PythonTaskObject) callconv(.c) c_int {
     const py_task = self.?;
     const fut = &py_task.fut;
 
@@ -120,7 +120,7 @@ pub fn task_clear(self: ?*PythonTaskObject) callconv(.C) c_int {
     return 0;
 }
 
-pub fn task_traverse(self: ?*PythonTaskObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.C) c_int {
+pub fn task_traverse(self: ?*PythonTaskObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
     const instance = self.?;
 
     const future_data = utils.get_data_ptr(Future, &instance.fut);
@@ -134,7 +134,7 @@ pub fn task_traverse(self: ?*PythonTaskObject, visit: python_c.visitproc, arg: ?
     return python_c.py_visit(self.?, visit, arg);
 }
 
-pub fn task_dealloc(self: ?*PythonTaskObject) callconv(.C) void {
+pub fn task_dealloc(self: ?*PythonTaskObject) callconv(.c) void {
     const instance = self.?;
 
     python_c.PyObject_GC_UnTrack(instance);
@@ -211,6 +211,6 @@ inline fn z_task_init(
 
 pub fn task_init(
     self: ?*PythonTaskObject, args: ?PyObject, kwargs: ?PyObject
-) callconv(.C) c_int {
+) callconv(.c) c_int {
     return utils.execute_zig_function(z_task_init, .{self.?, args, kwargs});
 }

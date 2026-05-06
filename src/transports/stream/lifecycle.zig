@@ -45,7 +45,7 @@ pub fn close_transports(
     }
 }
 
-pub fn transport_close(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_close(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     if (instance.closed) {
@@ -76,7 +76,7 @@ pub fn transport_close(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
     return arg;
 }
 
-pub fn transport_is_closing(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_is_closing(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     if (instance.closed) {
@@ -94,11 +94,11 @@ pub fn transport_is_closing(self: ?*StreamTransportObject) callconv(.C) ?PyObjec
     return python_c.PyBool_FromLong(@intCast(@intFromBool(closed)));
 }
 
-pub fn transport_get_protocol(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_get_protocol(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     return python_c.py_newref(self.?.protocol.?);
 }
 
-pub fn transport_set_protocol(self: ?*StreamTransportObject, new_protocol: ?PyObject) callconv(.C) ?PyObject {
+pub fn transport_set_protocol(self: ?*StreamTransportObject, new_protocol: ?PyObject) callconv(.c) ?PyObject {
     _ = Constructors.set_protocol(self.?, new_protocol.?) catch |err| {
         return utils.handle_zig_function_error(err, null);
     };

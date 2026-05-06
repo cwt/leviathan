@@ -201,7 +201,7 @@ inline fn z_loop_create_connection(
 
 pub fn loop_create_connection(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?*FutureObject {
+) callconv(.c) ?*FutureObject {
     return utils.execute_zig_function(
         z_loop_create_connection, .{
             self.?, args.?[0..@as(usize, @intCast(nargs))], knames,

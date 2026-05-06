@@ -90,7 +90,7 @@ inline fn z_loop_add_signal_handler(
 
 pub fn loop_add_signal_handler(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_loop_add_signal_handler, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))]
     });
@@ -98,7 +98,7 @@ pub fn loop_add_signal_handler(
 
 pub fn loop_remove_signal_handler(
     self: ?*LoopObject, py_sig: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     if (python_c.long_check(py_sig.?)) {
         python_c.raise_python_type_error("Invalid signal\x00");
         return null;

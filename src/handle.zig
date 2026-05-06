@@ -101,7 +101,7 @@ pub inline fn fast_new_handle(
     return instance;
 }
 
-fn handle_dealloc(self: ?*PythonHandleObject) callconv(.C) void {
+fn handle_dealloc(self: ?*PythonHandleObject) callconv(.c) void {
     const instance = self.?;
     python_c.py_decref_and_set_null(&instance.contextvars);
     python_c.py_decref_and_set_null(&instance.py_callback);
@@ -149,11 +149,11 @@ inline fn z_handle_init(
     return 0;
 }
 
-fn handle_init(self: ?*PythonHandleObject, args: ?PyObject, kwargs: ?PyObject) callconv(.C) c_int {
+fn handle_init(self: ?*PythonHandleObject, args: ?PyObject, kwargs: ?PyObject) callconv(.c) c_int {
     return utils.execute_zig_function(z_handle_init, .{self.?, args, kwargs});
 }
 
-fn handle_get_context(self: ?*PythonHandleObject, _: ?PyObject) callconv(.C) ?PyObject {
+fn handle_get_context(self: ?*PythonHandleObject, _: ?PyObject) callconv(.c) ?PyObject {
     return python_c.py_newref(self.?.contextvars.?);
 }
 
@@ -194,7 +194,7 @@ pub inline fn fast_handle_cancel(self: *PythonHandleObject) !void {
     }
 }
 
-fn handle_cancel(self: ?*PythonHandleObject, _: ?PyObject) callconv(.C) ?PyObject {
+fn handle_cancel(self: ?*PythonHandleObject, _: ?PyObject) callconv(.c) ?PyObject {
     fast_handle_cancel(self.?) catch |err| {
         return utils.handle_zig_function_error(err, null);
     };
@@ -202,7 +202,7 @@ fn handle_cancel(self: ?*PythonHandleObject, _: ?PyObject) callconv(.C) ?PyObjec
     return python_c.get_py_none();
 }
 
-fn handle_cancelled(self: ?*PythonHandleObject, _: ?PyObject) callconv(.C) ?PyObject {
+fn handle_cancelled(self: ?*PythonHandleObject, _: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
     const cancelled = switch (instance.thread_safe) {
         false => instance.cancelled,

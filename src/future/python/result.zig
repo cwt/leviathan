@@ -38,13 +38,13 @@ pub inline fn get_result(self: *PythonFutureObject) ?PyObject {
     };
 }
 
-pub fn future_result(self: ?*PythonFutureObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn future_result(self: ?*PythonFutureObject, _: ?PyObject) callconv(.c) ?PyObject {
     const res = get_result(self.?);
     python_c.py_xincref(res);
     return res;
 }
 
-pub fn future_exception(self: ?*PythonFutureObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn future_exception(self: ?*PythonFutureObject, _: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const future_data = utils.get_data_ptr(Future, instance);
@@ -92,7 +92,7 @@ inline fn z_future_set_exception(self: *PythonFutureObject, exception: PyObject)
     return python_c.get_py_none();
 }
 
-pub fn future_set_exception(self: ?*PythonFutureObject, exception: ?PyObject) callconv(.C) ?PyObject {
+pub fn future_set_exception(self: ?*PythonFutureObject, exception: ?PyObject) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_future_set_exception, .{self.?, exception.?});
 }
 
@@ -116,11 +116,11 @@ inline fn z_future_set_result(self: *PythonFutureObject, result: PyObject) !PyOb
     return python_c.get_py_none();
 }
 
-pub fn future_set_result(self: ?*PythonFutureObject, result: ?PyObject) callconv(.C) ?PyObject {
+pub fn future_set_result(self: ?*PythonFutureObject, result: ?PyObject) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_future_set_result, .{self.?, result.?});
 }
 
-pub fn future_done(self: ?*PythonFutureObject, _: ?PyObject) callconv(.C) ?PyObject {
+pub fn future_done(self: ?*PythonFutureObject, _: ?PyObject) callconv(.c) ?PyObject {
     const future_data = utils.get_data_ptr(Future, self.?);
     return switch (future_data.status) {
         .finished,.canceled => python_c.get_py_true(),

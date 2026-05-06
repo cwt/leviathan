@@ -116,7 +116,7 @@ inline fn z_transport_get_extra_info(
 
 pub fn transport_get_extra_info(
     self: ?*StreamTransportObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(
         z_transport_get_extra_info, .{
             self.?, args.?[0..@as(usize, @intCast(nargs))], knames

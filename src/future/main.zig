@@ -29,8 +29,8 @@ pub fn init(self: *Future, loop: *Loop) !void {
     };
 
     self.callbacks_arena_allocator = self.callbacks_arena.allocator();
-    self.callbacks_queue = Callback.CallbacksSetData.init(self.callbacks_arena_allocator);
-    self.exceptions_queue = std.ArrayList(?*python_c.PyObject).init(self.callbacks_arena_allocator);
+    self.callbacks_queue = .{};
+    self.exceptions_queue = .{};
 }
 
 pub fn release(self: *Future) void {

@@ -53,14 +53,14 @@ inline fn z_future_new(
 pub fn future_new(
     @"type": ?*python_c.PyTypeObject, args: ?PyObject,
     kwargs: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     const self = utils.execute_zig_function(
         z_future_new, .{@"type".?, args, kwargs}
     );
     return @ptrCast(self);
 }
 
-pub fn future_clear(self: ?*PythonFutureObject) callconv(.C) c_int {
+pub fn future_clear(self: ?*PythonFutureObject) callconv(.c) c_int {
     const py_future = self.?;
     const future_data = utils.get_data_ptr(Future, py_future);
     if (!future_data.released) {
@@ -77,7 +77,7 @@ pub fn future_clear(self: ?*PythonFutureObject) callconv(.C) c_int {
     return 0;
 }
 
-pub fn future_traverse(self: ?*PythonFutureObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.C) c_int {
+pub fn future_traverse(self: ?*PythonFutureObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
     const instance = self.?;
     const future_data = utils.get_data_ptr(Future, instance);
     if (future_data.result) |res| {
@@ -89,7 +89,7 @@ pub fn future_traverse(self: ?*PythonFutureObject, visit: python_c.visitproc, ar
     return python_c.py_visit(self.?, visit, arg);
 }
 
-pub fn future_dealloc(self: ?*PythonFutureObject) callconv(.C) void {
+pub fn future_dealloc(self: ?*PythonFutureObject) callconv(.c) void {
     const instance = self.?;
 
     python_c.PyObject_GC_UnTrack(instance);
@@ -124,19 +124,19 @@ inline fn z_future_init(
 
 pub fn future_init(
     self: ?*PythonFutureObject, args: ?PyObject, kwargs: ?PyObject
-) callconv(.C) c_int {
+) callconv(.c) c_int {
     return utils.execute_zig_function(z_future_init, .{self.?, args, kwargs});
 }
 
-pub fn future_get_loop(self: ?*PythonFutureObject) callconv(.C) ?PyObject {
+pub fn future_get_loop(self: ?*PythonFutureObject) callconv(.c) ?PyObject {
     return python_c.py_newref(self.?.py_loop);
 }
 
-pub fn future_iter(self: ?*PythonFutureObject) callconv(.C) ?PyObject {
+pub fn future_iter(self: ?*PythonFutureObject) callconv(.c) ?PyObject {
     return @ptrCast(python_c.py_newref(self.?));
 }
 
-pub fn future_iternext(self: ?*PythonFutureObject) callconv(.C) ?PyObject {
+pub fn future_iternext(self: ?*PythonFutureObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const future_data = utils.get_data_ptr(Future, instance);

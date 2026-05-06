@@ -1,31 +1,20 @@
-pub usingnamespace @import("linked_list.zig");
-pub usingnamespace @import("btree.zig");
+pub const LinkedList = @import("linked_list.zig").LinkedList;
+pub const BTree = @import("btree.zig").BTree;
 pub const PythonImports = @import("python_imports.zig");
 
 const std = @import("std");
 const builtin = @import("builtin");
 
 const python_c = @import("python_c");
-const jdz_allocator = @import("jdz_allocator");
-
-const gpaType: type = blk: {
-    if (builtin.mode == .Debug) {
-        break :blk std.heap.DebugAllocator(.{});
-    }else{
-        break :blk jdz_allocator.JdzAllocator(.{});
-    }
-};
+const gpaType: type = if (builtin.mode == .Debug)
+    std.heap.DebugAllocator(.{})
+else
+    std.heap.GeneralPurposeAllocator(.{});
 
 pub var gpa: gpaType = undefined;
 
 pub inline fn init_gpa() void {
-    gpa = blk: {
-        if (builtin.mode == .Debug) {
-            break :blk std.heap.DebugAllocator(.{}){};
-        }else{
-            break :blk jdz_allocator.JdzAllocator(.{}).init();
-        }
-    };
+    gpa = gpaType{};
 }
 
 pub inline fn get_data_ptr2(comptime T: type, comptime field_name: []const u8, leviathan_pyobject: anytype) *T {

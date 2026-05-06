@@ -52,8 +52,8 @@ fn load_configuration(self: *DNS, allocator: std.mem.Allocator) !void {
     });
     defer file.close();
 
-    const metadata = try file.metadata();
-    const size = metadata.size();
+    const stat_data = try file.stat();
+    const size = stat_data.size;
 
     const content = try allocator.alloc(u8, size);
     defer allocator.free(content);

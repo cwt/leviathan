@@ -33,11 +33,11 @@ pub fn write_operation_completed(
     }
 }
 
-pub fn transport_can_write_eof(_: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_can_write_eof(_: ?*StreamTransportObject) callconv(.c) ?PyObject {
     return python_c.get_py_true();
 }
 
-pub fn transport_write_eof(self: ?*StreamTransportObject) callconv(.C) ?PyObject {
+pub fn transport_write_eof(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const write_transport = utils.get_data_ptr2(WriteTransport, "write_transport", instance);
@@ -53,14 +53,14 @@ pub fn transport_write_eof(self: ?*StreamTransportObject) callconv(.C) ?PyObject
     return python_c.get_py_none();
 }
 
-pub fn transport_get_write_buffer_size(self: ?*StreamTransportObject) callconv (.C) ?PyObject {
+pub fn transport_get_write_buffer_size(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const write_transport = utils.get_data_ptr2(WriteTransport, "write_transport", instance);
     return python_c.PyLong_FromUnsignedLongLong(@intCast(write_transport.buffer_size));
 }
 
-pub fn transport_get_write_buffer_limits(self: ?*StreamTransportObject) callconv (.C) ?PyObject {
+pub fn transport_get_write_buffer_limits(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const tuple = python_c.PyTuple_New(2)
@@ -150,13 +150,13 @@ inline fn z_transport_set_write_buffer_limits(
 
 pub fn transport_set_write_buffer_limits(
     self: ?*StreamTransportObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?PyObject {
+) callconv(.c) ?PyObject {
     return utils.execute_zig_function(z_transport_set_write_buffer_limits, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames
     });
 }
 
-pub fn transport_write(self: ?*StreamTransportObject, py_buffer: ?PyObject) callconv(.C) ?PyObject {
+pub fn transport_write(self: ?*StreamTransportObject, py_buffer: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const write_transport = utils.get_data_ptr2(WriteTransport, "write_transport", instance);
@@ -184,7 +184,7 @@ pub fn transport_write(self: ?*StreamTransportObject, py_buffer: ?PyObject) call
     return python_c.get_py_none();
 }
 
-pub fn transport_write_lines(self: ?*StreamTransportObject, py_buffers: ?PyObject) callconv(.C) ?PyObject {
+pub fn transport_write_lines(self: ?*StreamTransportObject, py_buffers: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const write_transport = utils.get_data_ptr2(WriteTransport, "write_transport", instance);

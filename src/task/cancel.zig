@@ -60,7 +60,7 @@ inline fn fast_task_cancel(task: *PythonTaskObject, data: *Future, cancel_msg_py
     return true;
 }
 
-pub fn task_cancel(self: ?*PythonTaskObject, args: ?PyObject, kwargs: ?PyObject) callconv(.C) ?PyObject {
+pub fn task_cancel(self: ?*PythonTaskObject, args: ?PyObject, kwargs: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const future_data = utils.get_data_ptr(Future, &instance.fut);
@@ -90,7 +90,7 @@ pub fn task_cancel(self: ?*PythonTaskObject, args: ?PyObject, kwargs: ?PyObject)
     return python_c.PyBool_FromLong(@intCast(@intFromBool(cancelled)));
 }
 
-pub fn task_uncancel(self: ?*PythonTaskObject) callconv(.C) ?PyObject {
+pub fn task_uncancel(self: ?*PythonTaskObject) callconv(.c) ?PyObject {
     const instance = self.?;
     const new_cancel_requests = instance.cancel_requests -| 1;
     instance.cancel_requests = new_cancel_requests;
@@ -98,7 +98,7 @@ pub fn task_uncancel(self: ?*PythonTaskObject) callconv(.C) ?PyObject {
     return python_c.PyLong_FromUnsignedLongLong(@intCast(new_cancel_requests));
 }
 
-pub fn task_cancelling(self: ?*PythonTaskObject) callconv(.C) ?PyObject {
+pub fn task_cancelling(self: ?*PythonTaskObject) callconv(.c) ?PyObject {
     const instance = self.?;
 
     const future_data = utils.get_data_ptr(Future, &instance.fut);

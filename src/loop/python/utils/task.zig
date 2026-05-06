@@ -60,7 +60,7 @@ inline fn z_loop_create_task(
 
 pub fn loop_create_task(
     self: ?*PythonLoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.C) ?*PythonTaskObject {
+) callconv(.c) ?*PythonTaskObject {
     return utils.execute_zig_function(z_loop_create_task, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames
     });
