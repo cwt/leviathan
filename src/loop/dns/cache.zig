@@ -25,7 +25,7 @@ pub const Record = struct {
     }
 
     pub inline fn append_callback(self: *Record, user_callback: *const CallbackManager.Callback) !void {
-        try self.state.pending.user_callbacks.append(user_callback.*);
+        try self.state.pending.user_callbacks.append(self.state.pending.arena.allocator(), user_callback.*);
     }
 
     pub inline fn set_resolved_data(self: *Record, address_list: []std.net.Address, ttl: u32) void {

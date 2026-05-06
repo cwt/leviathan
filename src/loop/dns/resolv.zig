@@ -339,7 +339,7 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
 
             offset = new_offset;
             if (new_result) {
-                try server_data.results.append(result);
+                try server_data.results.append(server_data.control_data.arena.allocator(), result);
                 server_data.min_ttl = @min(server_data.min_ttl, ttl);
             }
 
@@ -517,7 +517,7 @@ fn prepare_data(
     control_data.loop = loop;
     const arena_allocator = control_data.arena.allocator();
 
-    control_data.user_callbacks = std.ArrayList(CallbackManager.Callback).init(arena_allocator);
+    control_data.user_callbacks = .{};
     control_data.record = try cache_slot.create_new_record(hostname, control_data);
 
     control_data.resolved = false;
@@ -529,8 +529,8 @@ fn prepare_data(
     try loop.reserve_slots(1);
     errdefer loop.reserved_slots -= 1;
 
-    try control_data.user_callbacks.append(user_callback.*);
-    errdefer control_data.user_callbacks.deinit();
+    try control_data.user_callbacks.append(arena_allocator, user_callback.*);
+    errdefer control_data.user_callbacks.deinit(arena_allocator);
 
     const queries_data = try arena_allocator.alloc(ServerQueryData, configuration.servers.len);
     const hostnames_array = try get_hostname_array(arena_allocator, hostname, configuration.search);

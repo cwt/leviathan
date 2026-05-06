@@ -179,15 +179,15 @@ inline fn z_loop_create_connection(
     }
 
     creation_data.loop = python_c.py_newref(self);
-    creation_data.future = fut;
-    creation_data.protocol_factory = protocol_factory;
+    creation_data.future = python_c.py_newref(fut);
+    creation_data.protocol_factory = python_c.py_newref(protocol_factory);
 
     const creation_data_ptr = try allocator.create(SocketCreationData);
     creation_data_ptr.* = creation_data;
     errdefer allocator.destroy(creation_data_ptr);
 
     const callback = CallbackManager.Callback{
-        .func = &create_socket_connection,
+        .func = &try_resolv_host,
         .cleanup = null,
         .data = .{
             .user_data = creation_data_ptr,
@@ -332,7 +332,7 @@ fn z_host_resolved_callback(connection_data: *SocketConnectionData) !void {
             .exception_context = null,
         },
     };
-    Loop.Scheduling.Soon.dispatch(loop_data, &callback);
+    try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
 }
 
 fn host_resolved_callback(data: *const CallbackManager.CallbackData) !void {
@@ -341,11 +341,11 @@ fn host_resolved_callback(data: *const CallbackManager.CallbackData) !void {
 
     if (data.cancelled) {
         python_c.raise_python_runtime_error("Host resolution failed");
-        return set_future_exception(error.PythonError, connection_data.creation_data.?.future);
+        return set_future_exception(error.PythonError, connection_data.creation_data.future);
     }
 
     z_host_resolved_callback(connection_data) catch |err| {
-        return set_future_exception(err, connection_data.creation_data.?.future);
+        return set_future_exception(err, connection_data.creation_data.future);
     };
 }
 
