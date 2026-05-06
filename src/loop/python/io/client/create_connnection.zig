@@ -352,6 +352,9 @@ fn host_resolved_callback(data: *const CallbackManager.CallbackData) !void {
 // -----------------------------------------------------------------
 // STEP#3: Create socket and submit connect events
 
+// -----------------------------------------------------------------
+// STEP#3: Create socket and submit connect events
+
 fn interleave_address_list(allocator: std.mem.Allocator, address_list: []std.net.Address, interleave: usize) !void {
     const tmp_list = try allocator.alloc(std.net.Address, address_list.len * 2);
     defer allocator.free(tmp_list);
@@ -391,6 +394,35 @@ fn interleave_address_list(allocator: std.mem.Allocator, address_list: []std.net
     }
 }
 
+const MultiConnectState = struct {
+    connection_data: *SocketConnectionData,
+    pending: usize,
+    succeeded: bool,
+    failed_count: usize,
+    task_ids: std.ArrayList(usize),
+    all_errors: bool,
+
+    pub fn init(allocator: std.mem.Allocator, connection_data: *SocketConnectionData, all_errors: bool) !*MultiConnectState {
+        const self = try allocator.create(MultiConnectState);
+        self.* = .{
+            .connection_data = connection_data,
+            .pending = 0,
+            .succeeded = false,
+            .failed_count = 0,
+            .task_ids = std.ArrayList(usize){},
+            .all_errors = all_errors,
+        };
+        return self;
+    }
+
+    pub fn deinit(self: *MultiConnectState) void {
+        const allocator = self.connection_data.creation_data.loop;
+        const loop_data = utils.get_data_ptr(Loop, allocator);
+        const gpa = loop_data.allocator;
+        self.task_ids.deinit(gpa);
+        gpa.destroy(self);
+    }
+};
 
 fn create_socket_and_submit_connect_req(address: *const std.net.Address, data: *SocketData, loop: *Loop) !usize {
     const flags = std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC;
@@ -401,36 +433,66 @@ fn create_socket_and_submit_connect_req(address: *const std.net.Address, data: *
     errdefer data.socket_fd = -1;
 
     const task_id = try Loop.Scheduling.IO.queue(
-        loop, .{
+        &loop.io, .{
             .SocketConnect = .{
                 .address = address,
                 .socket_fd = socket_fd,
                 .callback = .{
-                    .ZigGenericIO = .{
-                        .callback = &socket_connected_callback,
-                        .data = data
-                    }
-                }
-            }
+                    .func = &socket_connected_callback,
+                    .cleanup = null,
+                    .data = .{
+                        .user_data = data,
+                        .exception_context = null,
+                    },
+                },
+            },
         }
     );
 
     return task_id;
 }
 
+fn submit_connect_for_address(
+    mcs: *MultiConnectState, address: *const std.net.Address, allocator: std.mem.Allocator, loop: *Loop
+) !void {
+    const socket_data = try allocator.create(SocketData);
+    errdefer allocator.destroy(socket_data);
+    socket_data.* = .{
+        .multi_state = mcs,
+        .socket_fd = -1,
+    };
+
+    const task_id = create_socket_and_submit_connect_req(address, socket_data, loop) catch |err| {
+        allocator.destroy(socket_data);
+        return err;
+    };
+    try mcs.task_ids.append(allocator, task_id);
+    mcs.pending += 1;
+}
+
+fn schedule_remaining_connects_callback(data: *const CallbackManager.CallbackData) !void {
+    const mcs: *MultiConnectState = @alignCast(@ptrCast(data.user_data.?));
+    if (data.cancelled or mcs.succeeded) return;
+
+    const connection_data = mcs.connection_data;
+    const creation_data = connection_data.creation_data;
+    const loop = creation_data.loop;
+    const loop_data = utils.get_data_ptr(Loop, loop);
+    const allocator = loop_data.allocator;
+
+    const address_list = connection_data.address_list.?;
+    for (address_list[1..]) |*addr| {
+        submit_connect_for_address(mcs, addr, allocator, loop_data) catch |err| {
+            return set_future_exception(err, creation_data.future);
+        };
+    }
+}
+
 fn z_create_socket_connection(data: *SocketConnectionData, connection_submitted: *usize) !void {
     const creation_data = data.creation_data;
-
-    const port: u16 = blk: {
-        const py_port = creation_data.py_port orelse break :blk 0;
-        const value = python_c.PyLong_AsInt(py_port);
-        if (value == -1) {
-            if (python_c.PyErr_Occurred()) |_| {
-                return error.PythonError;
-            }
-        }
-
-        break :blk @intCast(value);
+    const address_list = data.address_list orelse {
+        python_c.raise_python_runtime_error("No addresses to connect to");
+        return error.PythonError;
     };
 
     const interleave: usize = blk: {
@@ -441,7 +503,6 @@ fn z_create_socket_connection(data: *SocketConnectionData, connection_submitted:
                 return error.PythonError;
             }
         }
-
         break :blk @intCast(value);
     };
 
@@ -450,25 +511,70 @@ fn z_create_socket_connection(data: *SocketConnectionData, connection_submitted:
     const allocator = loop_data.allocator;
 
     if (interleave > 0) {
-        try interleave_address_list(allocator, data.address_list.?, interleave);
+        try interleave_address_list(allocator, address_list, interleave);
     }
 
+    const all_errors: bool = blk: {
+        const py_all_errors = creation_data.py_all_errors orelse break :blk false;
+        break :blk python_c.PyObject_IsTrue(py_all_errors) != 0;
+    };
+
+    const mcs = try MultiConnectState.init(allocator, data, all_errors);
+    errdefer mcs.deinit();
+
+    var delay: f64 = 0.25;
     if (creation_data.py_happy_eyeballs_delay) |py_delay| {
         if (interleave == 0) {
-            try interleave_address_list(allocator, data.address_list.?, 1);
+            try interleave_address_list(allocator, address_list, 1);
         }
-
-        var delay = python_c.PyFloat_AsDouble(py_delay);
+        delay = python_c.PyFloat_AsDouble(py_delay);
         const eps = comptime std.math.floatEps(f64);
         if ((delay + 1.0) < eps) {
             if (python_c.PyErr_Occurred() != null) {
                 return error.PythonError;
             }
-
             delay = 0;
         }
-    }else{
+    }
 
+    if (address_list.len == 0) {
+        python_c.raise_python_runtime_error("No addresses resolved");
+        return set_future_exception(error.PythonError, creation_data.future);
+    }
+
+    // Submit first address immediately
+    try submit_connect_for_address(mcs, &address_list[0], allocator, loop_data);
+    connection_submitted.* += 1;
+
+    // Schedule remaining addresses after happy eyeballs delay
+    if (address_list.len > 1 and delay > 0) {
+        const callback = CallbackManager.Callback{
+            .func = &schedule_remaining_connects_callback,
+            .cleanup = null,
+            .data = .{
+                .user_data = mcs,
+                .exception_context = null,
+            },
+        };
+        const seconds: u64 = @intFromFloat(@floor(delay));
+        const nanoseconds: u64 = @intFromFloat((delay - @floor(delay)) * 1e9);
+        const duration: std.os.linux.timespec = .{
+            .sec = @intCast(seconds),
+            .nsec = @intCast(nanoseconds),
+        };
+        _ = try Loop.Scheduling.IO.queue(&loop_data.io, .{
+            .WaitTimer = .{
+                .duration = duration,
+                .delay_type = .Relative,
+                .callback = callback,
+            },
+        });
+    } else {
+        // Submit all remaining immediately (no delay)
+        for (address_list[1..]) |*addr| {
+            try submit_connect_for_address(mcs, addr, allocator, loop_data);
+            connection_submitted.* += 1;
+        }
     }
 }
 
@@ -488,7 +594,7 @@ fn create_socket_connection(data: *const CallbackManager.CallbackData) !void {
     }
 
     z_create_socket_connection(socket_creation_data, &connections_submitted) catch |err| {
-        return set_future_exception(err, socket_creation_data.future);
+        return set_future_exception(err, socket_creation_data.creation_data.future);
     };
 }
 
@@ -496,18 +602,110 @@ fn create_socket_connection(data: *const CallbackManager.CallbackData) !void {
 // STEP#4: Socket connected (or failed to connect)
 
 const SocketData = struct {
-    connection_data: *SocketConnectionData,
-    socket_fd: std.posix.fd_t
+    multi_state: *MultiConnectState,
+    socket_fd: std.posix.fd_t,
 };
 
-fn socket_connected_callback(
-    data: ?*anyopaque, io_uring_res: i32, io_uring_err: std.os.linux.E
-) CallbackManager.ExecuteCallbacksReturn {
-    _ = data;
-    _ = io_uring_res;
-    _ = io_uring_err;
+fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
+    const socket_data: *SocketData = @alignCast(@ptrCast(data.user_data.?));
+    const mcs = socket_data.multi_state;
+    const fd = socket_data.socket_fd;
 
-    return .Continue;
+    const creation_data = mcs.connection_data.creation_data;
+    const loop = creation_data.loop;
+    const loop_data = utils.get_data_ptr(Loop, loop);
+    const allocator = loop_data.allocator;
+    allocator.destroy(socket_data);
+
+    mcs.pending -= 1;
+
+    if (mcs.succeeded or data.cancelled) {
+        if (fd >= 0) std.posix.close(fd);
+        if (mcs.pending == 0) mcs.deinit();
+        return;
+    }
+
+    const io_uring_res = data.io_uring_res;
+    const io_uring_err = data.io_uring_err;
+
+    if (io_uring_err != .SUCCESS or io_uring_res < 0) {
+        mcs.failed_count += 1;
+        if (fd >= 0) std.posix.close(fd);
+
+        if (mcs.pending == 0) {
+            const future = creation_data.future;
+            const future_data = utils.get_data_ptr(Future, future);
+
+            if (mcs.all_errors) {
+                @panic("all_errors not yet implemented");
+            } else {
+                const errno_val = if (io_uring_res < 0) -io_uring_res else @intFromEnum(io_uring_err);
+                const exc = python_c.PyObject_CallFunction(
+                    python_c.PyExc_OSError, "is\x00",
+                    @as(c_int, @intCast(errno_val)),
+                    "Connect call failed\x00"
+                ) orelse {
+                    Future.Python.Result.future_fast_set_exception(
+                        @ptrCast(future), future_data,
+                        python_c.PyErr_GetRaisedException() orelse return error.PythonError
+                    );
+                    mcs.deinit();
+                    return error.PythonError;
+                };
+                Future.Python.Result.future_fast_set_exception(@ptrCast(future), future_data, exc);
+            }
+
+            mcs.deinit();
+        }
+        return;
+    }
+
+    // Success — mark and create transport
+    mcs.succeeded = true;
+
+    for (mcs.task_ids.items) |task_id| {
+        _ = loop_data.io.queue(.{ .Cancel = task_id }) catch {};
+    }
+
+    const transport_creation_data = allocator.create(TransportCreationData) catch {
+        const future = creation_data.future;
+        const future_data = utils.get_data_ptr(Future, future);
+        python_c.raise_python_error(python_c.PyExc_MemoryError.?, "Out of memory");
+        Future.Python.Result.future_fast_set_exception(
+            @ptrCast(future), future_data,
+            python_c.PyErr_GetRaisedException() orelse return error.PythonError
+        );
+        if (fd >= 0) std.posix.close(fd);
+        if (mcs.pending == 0) mcs.deinit();
+        return;
+    };
+    transport_creation_data.* = .{
+        .protocol_factory = python_c.py_newref(creation_data.protocol_factory),
+        .future = python_c.py_newref(creation_data.future),
+        .loop = python_c.py_newref(creation_data.loop),
+        .socket_fd = fd,
+        .zero_copying = false,
+        .fd_created = true,
+    };
+
+    const callback = CallbackManager.Callback{
+        .func = &create_transport_and_set_future_result,
+        .cleanup = null,
+        .data = .{
+            .user_data = transport_creation_data,
+            .exception_context = null,
+        },
+    };
+    Loop.Scheduling.Soon.dispatch(loop_data, &callback) catch |err| {
+        allocator.destroy(transport_creation_data);
+        if (fd >= 0) std.posix.close(fd);
+        set_future_exception(err, creation_data.future) catch {};
+        if (mcs.pending == 0) mcs.deinit();
+        return;
+    };
+
+    if (mcs.pending == 0) mcs.deinit();
+    return;
 }
 
 // -----------------------------------------------------------------
