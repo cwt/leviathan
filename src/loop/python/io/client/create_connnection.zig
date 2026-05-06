@@ -542,6 +542,18 @@ fn z_create_socket_connection(data: *SocketConnectionData, connection_submitted:
         return set_future_exception(error.PythonError, creation_data.future);
     }
 
+    const port: u16 = blk: {
+        const py_port = creation_data.py_port orelse break :blk 0;
+        const value = python_c.PyLong_AsInt(py_port);
+        if (value == -1) {
+            if (python_c.PyErr_Occurred()) |_| return error.PythonError;
+        }
+        break :blk @intCast(value);
+    };
+    for (address_list) |*addr| {
+        addr.setPort(port);
+    }
+
     // Submit first address immediately
     try submit_connect_for_address(mcs, &address_list[0], allocator, loop_data);
     connection_submitted.* += 1;
@@ -660,51 +672,26 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
         return;
     }
 
-    // Success — mark and create transport
+    // Success — mark and create transport (synchronous)
     mcs.succeeded = true;
 
     for (mcs.task_ids.items) |task_id| {
         _ = loop_data.io.queue(.{ .Cancel = task_id }) catch {};
     }
 
-    const transport_creation_data = allocator.create(TransportCreationData) catch {
-        const future = creation_data.future;
-        const future_data = utils.get_data_ptr(Future, future);
-        python_c.raise_python_error(python_c.PyExc_MemoryError.?, "Out of memory");
-        Future.Python.Result.future_fast_set_exception(
-            @ptrCast(future), future_data,
-            python_c.PyErr_GetRaisedException() orelse return error.PythonError
-        );
-        if (fd >= 0) std.posix.close(fd);
-        if (mcs.pending == 0) mcs.deinit();
-        return;
-    };
-    transport_creation_data.* = .{
-        .protocol_factory = python_c.py_newref(creation_data.protocol_factory),
-        .future = python_c.py_newref(creation_data.future),
-        .loop = python_c.py_newref(creation_data.loop),
+    var transport_creation_data = TransportCreationData{
+        .protocol_factory = creation_data.protocol_factory,
+        .future = creation_data.future,
+        .loop = creation_data.loop,
         .socket_fd = fd,
         .zero_copying = false,
         .fd_created = true,
     };
 
-    const callback = CallbackManager.Callback{
-        .func = &create_transport_and_set_future_result,
-        .cleanup = null,
-        .data = .{
-            .user_data = transport_creation_data,
-            .exception_context = null,
-        },
+    z_create_transport_and_set_future_result(&transport_creation_data) catch |err| {
+        return set_future_exception(err, creation_data.future);
     };
-    Loop.Scheduling.Soon.dispatch(loop_data, &callback) catch |err| {
-        allocator.destroy(transport_creation_data);
-        if (fd >= 0) std.posix.close(fd);
-        set_future_exception(err, creation_data.future) catch {};
-        if (mcs.pending == 0) mcs.deinit();
-        return;
-    };
-
-    if (mcs.pending == 0) mcs.deinit();
+    transport_creation_data.fd_created = false;
     return;
 }
 
