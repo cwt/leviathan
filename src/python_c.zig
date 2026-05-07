@@ -307,71 +307,24 @@ inline fn get_refcnt_split(obj: *Python.PyObject) *[2]u32 {
 
 pub inline fn py_incref(op: *Python.PyObject) void {
     if (@intFromPtr(op) <= 0xFFFF) return;
-    if (builtin.single_threaded) {
-        const refcnt_ptr = get_refcnt_split(op);
-        refcnt_ptr.*[0] +|= 1;
-    }else{
-        const new_local = @atomicLoad(u32, &op.ob_ref_local, .unordered) +| 1;
-        if (op.ob_tid == 0 or op.ob_tid == std.Thread.getCurrentId()) {
-            @atomicStore(u32, &op.ob_ref_local, new_local, .unordered);
-        }else{
-            _ = @atomicRmw(
-                Python.Py_ssize_t, &op.ob_ref_shared, .Add,
-                @as(Python.Py_ssize_t, @bitCast(@as(c_long, @as(c_int, 1) << @intCast(2)))),
-                .monotonic
-            );
-        }
-    }
+    _c.Py_IncRef(op);
 }
 
 pub inline fn py_xincref(op: ?*Python.PyObject) void {
     if (op) |o| {
-        py_incref(o);
+        _c.Py_IncRef(o);
     }
-}
-
-inline fn _Py_IsImmortal(refcnt: Python.Py_ssize_t) bool {
-    return @as(i32, @bitCast(@as(c_int, @truncate(refcnt)))) < @as(c_int, 0);
 }
 
 pub fn py_decref(op: *Python.PyObject) void {
     if (@intFromPtr(op) <= 0xFFFF) return;
-    if (builtin.single_threaded) {
-        const ref_ptr = get_refcnt_ptr(op);
-        var ref = ref_ptr.*;
-        if (_Py_IsImmortal(ref)) {
-            return;
-        }
-
-        ref -= 1;
-        ref_ptr.* = ref;
-        if (ref == 0) {
-            const ob_type: *Python.PyTypeObject = op.ob_type orelse unreachable;
-            ob_type.tp_dealloc.?(op);
-        }
-    }else{
-        var local = @atomicLoad(u32, &op.ob_ref_local, .unordered);
-        if (_Py_IsImmortal(local)) {
-            return;
-        }
-
-        if (op.ob_tid == 0 or op.ob_tid == std.Thread.getCurrentId()) {
-            if (local == 0) return;
-            local -= 1;
-            @atomicStore(u32, &op.ob_ref_local, local, .unordered);
-            if (local == 0) {
-                Python._Py_MergeZeroLocalRefcount(op);
-            }
-        }else{
-            Python._Py_DecRefShared(op);
-        }
-    }
+    _c.Py_DecRef(op);
 }
 
 pub inline fn py_xdecref(op: ?*Python.PyObject) void {
     if (op) |o| {
         if (@intFromPtr(o) > 0xFFFF) {
-            py_decref(o);
+            _c.Py_DecRef(o);
         }
     }
 }
