@@ -59,7 +59,7 @@ No breaking changes in io_uring API. All IORING_OP_*, IOSQE_ASYNC, io_uring_cqe 
 
 ---
 
-## 🟡 PRIORITY 2: Network & Transport (3 done, 4 remaining)
+## 🟡 PRIORITY 2: Network & Transport (4 done, 3 remaining)
 
 ### 2.1 — `create_connection` — ✅ DONE
 
@@ -77,17 +77,17 @@ DNS lookup integration, returns `(family, type, proto, canonname, sockaddr)` tup
 Sync (literal IP) + async callback. 5 tests pass on 3.13 + 3.14.
 `getnameinfo` not yet implemented.
 
+### 2.4 — Pipe Transport (Unix Domain Sockets) — ✅ DONE
+
+`create_unix_connection` + `create_unix_server` using AF_UNIX sockets.
+Reuses StreamTransport + StreamServer internals. Socket file unlink on bind.
+5 tests pass (connection, server, sockets, missing args, multiple clients).
+
 ### 2.3 — Datagram / UDP Transport
 
 **Status:** Stub (`transports/datagram/` — empty struct).
 
 **What's needed:** Full UDP transport with `recvmsg`/`sendmsg` via io_uring, flow control, broadcast, multicast, `create_datagram_endpoint`.
-
-### 2.4 — Pipe Transport (Unix Domain Sockets)
-
-**Status:** Stub (`transports/pipe/` — empty struct).
-
-**What's needed:** `AF_UNIX` connect/bind/listen/accept, `create_unix_connection`, `create_unix_server`, ReadPipeTransport + WritePipeTransport variants for subprocess stdio.
 
 ### 2.5 — Subprocess Transport
 
@@ -160,4 +160,4 @@ Abstract I/O backend with kqueue fallback. Currently Linux-only.
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
-- **Test counts:** 129 Python tests (118 original + 11 new), all passing on 3.13 + 3.14
+- **Test counts:** 134 Python tests (118 original + 16 new), all passing on 3.13 + 3.14
