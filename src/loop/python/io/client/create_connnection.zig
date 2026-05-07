@@ -702,20 +702,19 @@ fn z_create_transport_and_set_future_result(data: *const TransportCreationData) 
     var transport_added_to_tuple: bool = false;
     var protocol_added_to_tuple: bool = false;
 
-    const transport = try Stream.Constructors.new_stream_transport(
-        data.protocol_factory, data.loop, data.socket_fd, data.zero_copying
-    );
-    errdefer {
-        // PyTuple_SetItem steal reference
-        if (!transport_added_to_tuple) {
-            python_c.py_decref(@ptrCast(transport));
-        }
-    }
-
     const protocol = python_c.PyObject_CallNoArgs(data.protocol_factory) orelse return error.PythonError;
     errdefer {
         if (!protocol_added_to_tuple) {
             python_c.py_decref(protocol);
+        }
+    }
+
+    const transport = try Stream.Constructors.new_stream_transport(
+        protocol, data.loop, data.socket_fd, data.zero_copying
+    );
+    errdefer {
+        if (!transport_added_to_tuple) {
+            python_c.py_decref(@ptrCast(transport));
         }
     }
 

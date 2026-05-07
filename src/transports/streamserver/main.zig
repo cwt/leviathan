@@ -137,8 +137,9 @@ fn accept_callback(data: *const CallbackManager.CallbackData) !void {
     _ = utils.get_data_ptr(Loop, @as(*Loop.Python.LoopObject, @ptrCast(loop)));
 
     const protocol = python_c.PyObject_CallNoArgs(server.protocol_factory.?) orelse return error.PythonError;
+    errdefer python_c.py_decref(protocol);
     const transport = try Stream.Constructors.new_stream_transport(
-        server.protocol_factory.?, @ptrCast(loop), client_fd, false
+        protocol, @ptrCast(loop), client_fd, false
     );
     errdefer python_c.py_decref(@ptrCast(transport));
 
