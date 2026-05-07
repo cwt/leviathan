@@ -174,6 +174,13 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Create a datagram endpoint.\x00",
         .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
     },
+    // --------------------- Subprocess ---------------------
+    python_c.PyMethodDef{
+        .ml_name = "subprocess_exec\x00",
+        .ml_meth = @ptrCast(&IO.Subprocess.exec.loop_subprocess_exec),
+        .ml_doc = "Execute a subprocess.\x00",
+        .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
+    },
     // python_c.PyMethodDef{
     //     .ml_name = "remove_writer\x00",
     //     .ml_meth = @ptrCast(&Watchers.loop_remove_writer),

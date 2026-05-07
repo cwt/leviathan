@@ -4,3 +4,4 @@ pub const Server = @import("server/main.zig");
 pub const Socket = @import("socket/main.zig");
 pub const Pipe = @import("pipe/main.zig");
 pub const Datagram = @import("datagram/main.zig");
+pub const Subprocess = @import("subprocess/main.zig");
