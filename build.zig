@@ -67,6 +67,10 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    if (python_is_gil_disabled) {
+        python_c_module.addCMacro("Py_GIL_DISABLED", "1");
+    }
+
     python_c_module.addIncludePath(.{
         .cwd_relative = python_include_dir,
     });

@@ -6,16 +6,14 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const python_c = @import("python_c");
-const gpaType: type = if (builtin.mode == .Debug)
-    std.heap.DebugAllocator(.{})
-else
-    std.heap.GeneralPurposeAllocator(.{});
+pub const gpa = struct {
+    pub fn allocator(_: @This()) std.mem.Allocator {
+        return std.heap.c_allocator;
+    }
+    pub fn deinit(_: @This()) void {}
+}{};
 
-pub var gpa: gpaType = undefined;
-
-pub inline fn init_gpa() void {
-    gpa = gpaType{};
-}
+pub fn init_gpa() void {}
 
 pub inline fn get_data_ptr2(comptime T: type, comptime field_name: []const u8, leviathan_pyobject: anytype) *T {
     const type_info = @typeInfo(@TypeOf(leviathan_pyobject));

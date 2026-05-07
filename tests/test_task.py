@@ -29,43 +29,51 @@ def test_checking_subclassing_and_arguments() -> None:
 
 def test_get_coro() -> None:
     loop = Loop()
+    coro = AsyncMock()()
     try:
-        coro = AsyncMock()()
         task = Task(coro, loop=loop)
         assert task.get_coro() is coro
     finally:
+        coro.close()
         loop.close()
 
 
 def test_get_context() -> None:
     loop = Loop()
+    coro1 = AsyncMock()()
+    coro2 = AsyncMock()()
     try:
-        task = Task(AsyncMock()(), loop=loop)
+        task = Task(coro1, loop=loop)
         assert type(task.get_context()) is Context
 
         ctx = copy_context()
-        task = Task(AsyncMock()(), loop=loop, context=ctx)
+        task = Task(coro2, loop=loop, context=ctx)
         assert task.get_context() is ctx
     finally:
+        coro1.close()
+        coro2.close()
         loop.close()
 
 
 def test_get_loop() -> None:
     loop = Loop()
+    coro = AsyncMock()()
     try:
-        task = Task(AsyncMock()(), loop=loop)
+        task = Task(coro, loop=loop)
         assert task.get_loop() is loop
     finally:
+        coro.close()
         loop.close()
 
 
 def test_name() -> None:
     loop = Loop()
+    coros = [AsyncMock()() for _ in range(2)]
     try:
-        task = Task(AsyncMock()(), loop=loop)
+        task = Task(coros[0], loop=loop)
         assert task.get_name()
 
-        task = Task(AsyncMock()(), loop=loop, name="test")
+        task = Task(coros[1], loop=loop, name="test")
         assert task.get_name() == "test"
 
         task.set_name("test2")
@@ -74,17 +82,21 @@ def test_name() -> None:
         task.set_name(23)
         assert task.get_name() == "23"
     finally:
+        for c in coros:
+            c.close()
         loop.close()
 
 
 def test_stack() -> None:
     loop = Loop()
+    coro = AsyncMock()()
     try:
-        task = Task(AsyncMock()(), loop=loop)
+        task = Task(coro, loop=loop)
         with io.StringIO() as buf:
             task.print_stack(file=buf)
             assert buf.getvalue()
     finally:
+        coro.close()
         loop.close()
 
 
