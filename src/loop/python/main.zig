@@ -147,6 +147,13 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Create a TCP server.\x00",
         .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
     },
+    // --------------------- Socket DNS ---------------------
+    python_c.PyMethodDef{
+        .ml_name = "getaddrinfo\x00",
+        .ml_meth = @ptrCast(&IO.Socket.getaddrinfo.loop_getaddrinfo),
+        .ml_doc = "Resolve a hostname to a list of address tuples.\x00",
+        .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
+    },
     // python_c.PyMethodDef{
     //     .ml_name = "remove_writer\x00",
     //     .ml_meth = @ptrCast(&Watchers.loop_remove_writer),
