@@ -65,9 +65,13 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
         return;
     }
 
-    // Re-arm poll (on success or timeout)
+    // Re-arm poll (on success or timeout) — skip if loop is stopping
     {
         const loop_data = watcher.loop_data;
+        if (loop_data.stopping) {
+            @call(.always_inline, loop_watchers_cleanup_callback, .{watcher});
+            return;
+        }
         const watcher_callback: CallbackManager.Callback = .{
             .func = &loop_watchers_callback,
             .cleanup = null,
@@ -77,7 +81,6 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
             }
         };
 
-        const poll_timeout: std.os.linux.kernel_timespec = .{ .sec = 5, .nsec = 0 };
 
         const blocking_task_id = try loop_data.io.queue(
             switch (watcher.event_type) {
@@ -85,14 +88,12 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
                     .WaitReadable = .{
                         .fd = fd,
                         .callback = watcher_callback,
-                        .timeout = poll_timeout,
                     },
                 },
                 std.c.POLL.OUT => Loop.Scheduling.IO.BlockingOperationData{
                     .WaitWritable = .{
                         .fd = fd,
                         .callback = watcher_callback,
-                        .timeout = poll_timeout,
                     },
                 },
                 else => unreachable

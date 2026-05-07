@@ -199,6 +199,11 @@ def test_remove_writer_then_add() -> None:
         # Remove writer
         assert loop.remove_writer(w), "Failed to remove writer"
 
+        # Flush the cancel completion before re-adding
+        loop.call_soon(lambda: None)
+        loop.call_later(0.01, loop.stop)
+        loop.run_forever()
+
         # Add writer again
         loop.add_writer(w, writer_callback)
 
