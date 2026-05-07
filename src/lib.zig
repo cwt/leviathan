@@ -29,19 +29,22 @@ const static_leviathan_modules_name = .{
 const dynamic_leviathan_modules_init_fns = .{
     loop.Python.create_type,
     transports.Stream.create_type,
-    transports.StreamServer.create_type
+    transports.StreamServer.create_type,
+    transports.Datagram.create_type
 };
 
 const dynamic_leviathan_types_ptrs = .{
     &loop.Python.LoopType,
     &transports.Stream.StreamType,
-    &transports.StreamServer.StreamServerType
+    &transports.StreamServer.StreamServerType,
+    &transports.Datagram.DatagramTransportType
 };
 
 const dynamic_leviathan_modules_names = .{
     "Loop\x00",
     "StreamTransport\x00",
-    "StreamServer\x00"
+    "StreamServer\x00",
+    "DatagramTransport\x00"
 };
 
 fn module_cleanup(_: *python_c.PyObject) callconv(.c) void {
