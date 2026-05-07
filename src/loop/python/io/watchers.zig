@@ -36,7 +36,12 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
     const watcher: *Loop.FDWatcher = @alignCast(@ptrCast(data.user_data.?));
 
     const fd = watcher.fd;
-    if (!data.cancelled and data.io_uring_err == .SUCCESS and fd >= 0) {
+    if (data.cancelled or fd < 0) {
+        @call(.always_inline, loop_watchers_cleanup_callback, .{watcher});
+        return;
+    }
+
+    if (data.io_uring_err == .SUCCESS) {
         const loop_data = watcher.loop_data;
         const handle = watcher.handle;
         const callback = CallbackManager.Callback{
@@ -55,7 +60,14 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
 
         try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
         python_c.py_incref(@ptrCast(handle));
+    } else if (data.io_uring_err != .CANCELED or data.cancelled) {
+        @call(.always_inline, loop_watchers_cleanup_callback, .{watcher});
+        return;
+    }
 
+    // Re-arm poll (on success or timeout)
+    {
+        const loop_data = watcher.loop_data;
         const watcher_callback: CallbackManager.Callback = .{
             .func = &loop_watchers_callback,
             .cleanup = null,
@@ -65,18 +77,22 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
             }
         };
 
+        const poll_timeout: std.os.linux.kernel_timespec = .{ .sec = 5, .nsec = 0 };
+
         const blocking_task_id = try loop_data.io.queue(
             switch (watcher.event_type) {
                 std.c.POLL.IN => Loop.Scheduling.IO.BlockingOperationData{
                     .WaitReadable = .{
                         .fd = fd,
-                        .callback = watcher_callback
+                        .callback = watcher_callback,
+                        .timeout = poll_timeout,
                     },
                 },
                 std.c.POLL.OUT => Loop.Scheduling.IO.BlockingOperationData{
                     .WaitWritable = .{
                         .fd = fd,
-                        .callback = watcher_callback
+                        .callback = watcher_callback,
+                        .timeout = poll_timeout,
                     },
                 },
                 else => unreachable
@@ -86,7 +102,6 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
         watcher.blocking_task_id = blocking_task_id;
         return;
     }
-
     @call(.always_inline, loop_watchers_cleanup_callback, .{watcher});
 }
 

@@ -99,6 +99,13 @@ pub fn release(self: *Loop) void {
         CallbackManager.release_sets_queue(allocator, ready_tasks_queue);
     }
 
+    // Cancel any remaining watcher I/O before deinit
+    {
+        var sig: std.posix.fd_t = undefined;
+        while (self.reader_watchers.pop(&sig)) |_| {}
+        while (self.writer_watchers.pop(&sig)) |_| {}
+    }
+
     self.reader_watchers.deinit() catch |err| {
         std.debug.panic("Unexpected error while releasing reader watchers: {s}", .{@errorName(err)});
     };
