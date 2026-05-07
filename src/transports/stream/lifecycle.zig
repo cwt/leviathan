@@ -129,7 +129,7 @@ pub fn transport_force_close(self: ?*StreamTransportObject, exc: ?PyObject) call
         instance.fd = -1;
     }
 
-    const exc_arg = exc orelse python_c.get_py_none();
+    const exc_arg = if (exc) |e| python_c.py_newref(e) else python_c.get_py_none();
     defer python_c.py_decref(exc_arg);
 
     const connection_lost = instance.protocol_connection_lost orelse return python_c.get_py_none();
