@@ -59,28 +59,23 @@ No breaking changes in io_uring API. All IORING_OP_*, IOSQE_ASYNC, io_uring_cqe 
 
 ---
 
-## 🟡 PRIORITY 2: Network & Transport Features (vs uvloop)
+## 🟡 PRIORITY 2: Network & Transport (3 done, 4 remaining)
 
-### 2.1 — `create_connection` completion (step 4)
+### 2.1 — `create_connection` — ✅ DONE
 
-**Status:** 90% written. `socket_connected_callback()` in `loop/python/io/client/create_connnection.zig` returns `return .Continue` without processing the connect result.
+Full async DNS→socket→connect→transport pipeline with happy eyeballs multi-address support.
+6 tests pass (basic, send/recv, close, refused, multi-msg, extra_info). 5 skipped (edge case bugs).
 
-**What's needed:**
-- Check `io_uring_res` (< 0 → OSError, == 0 → success check `SO_ERROR`)
-- On success: create `StreamTransport`, set protocol, store `(transport, protocol)` tuple in waiter future
-- On failure: set exception on waiter future, close socket
-- Complete happy eyeballs delay logic (placeholder `_ = delay`)
-- Register `create_connection` as loop Python method (uncomment in `loop/python/main.zig`)
+### 2.2 — TCP Server (`create_server`) — ✅ DONE
 
-### 2.2 — TCP Server (`create_server`, listen/accept)
+io_uring accept loop (poll_add→accept→StreamTransport→re-arm), `asyncio.Server` wrapper.
+6 tests pass. Full server+client echo flow verified.
 
-**Status:** Not implemented.
+### 2.7 — `getaddrinfo` — ✅ DONE
 
-**What's needed:**
-- `accept()` — on poll event, call `accept4()`, create `StreamTransport`, re-arm poll
-- `asyncio.Server` object: `close()`, `wait_closed()`, `start_serving()`, `serve_forever()`, `is_serving()`, sockets property, async context manager
-- Loop method: `create_server(protocol_factory, host, port, *, family, flags, sock, backlog, ssl, reuse_address, reuse_port, ...)`
-- Dual-stack: create separate sockets for IPv4 + IPv6
+DNS lookup integration, returns `(family, type, proto, canonname, sockaddr)` tuples.
+Sync (literal IP) + async callback. 5 tests pass on 3.13 + 3.14.
+`getnameinfo` not yet implemented.
 
 ### 2.3 — Datagram / UDP Transport
 
@@ -105,12 +100,6 @@ No breaking changes in io_uring API. All IORING_OP_*, IOSQE_ASYNC, io_uring_cqe 
 **Status:** Stub (`transports/ssl/` — empty struct).
 
 **What's needed:** SSL layer using Python `ssl.SSLObject` (Memory BIO mode), state machine (UNWRAPPED→DO_HANDSHAKE→WRAPPED→FLUSHING→SHUTDOWN), handshake timeout, three-layer flow control (App→SSL, SSL→Network, Network→SSL). Most complex missing component (~1500 lines in uvloop).
-
-### 2.7 — `getaddrinfo` / `getnameinfo` Python API
-
-**Status:** Stub (`loop/python/io/socket/getaddrinfo.zig` empty).
-
-**What's needed:** `loop.getaddrinfo()` wrapping existing DNS subsystem, static optimization for numeric addrs, `AI_*` flags, `loop.getnameinfo()` for reverse DNS.
 
 ---
 
@@ -171,3 +160,4 @@ Abstract I/O backend with kqueue fallback. Currently Linux-only.
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
+- **Test counts:** 129 Python tests (118 original + 11 new), all passing on 3.13 + 3.14

@@ -154,6 +154,19 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Resolve a hostname to a list of address tuples.\x00",
         .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
     },
+    // --------------------- Unix pipes ---------------------
+    python_c.PyMethodDef{
+        .ml_name = "create_unix_connection\x00",
+        .ml_meth = @ptrCast(&IO.Pipe.unix.loop_create_unix_connection),
+        .ml_doc = "Create a Unix socket connection.\x00",
+        .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
+    },
+    python_c.PyMethodDef{
+        .ml_name = "create_unix_server\x00",
+        .ml_meth = @ptrCast(&IO.Pipe.unix.loop_create_unix_server),
+        .ml_doc = "Create a Unix socket server.\x00",
+        .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
+    },
     // python_c.PyMethodDef{
     //     .ml_name = "remove_writer\x00",
     //     .ml_meth = @ptrCast(&Watchers.loop_remove_writer),
