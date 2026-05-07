@@ -311,7 +311,7 @@ pub inline fn py_incref(op: *Python.PyObject) void {
         refcnt_ptr.*[0] +|= 1;
     }else{
         const new_local = @atomicLoad(u32, &op.ob_ref_local, .unordered) +| 1;
-        if (op.ob_tid == std.Thread.getCurrentId()) {
+        if (op.ob_tid == 0 or op.ob_tid == std.Thread.getCurrentId()) {
             @atomicStore(u32, &op.ob_ref_local, new_local, .unordered);
         }else{
             _ = @atomicRmw(
@@ -353,7 +353,8 @@ pub fn py_decref(op: *Python.PyObject) void {
             return;
         }
 
-        if (op.ob_tid == std.Thread.getCurrentId()) {
+        if (op.ob_tid == 0 or op.ob_tid == std.Thread.getCurrentId()) {
+            if (local == 0) return;
             local -= 1;
             @atomicStore(u32, &op.ob_ref_local, local, .unordered);
             if (local == 0) {

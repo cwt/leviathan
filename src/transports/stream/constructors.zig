@@ -199,6 +199,21 @@ inline fn z_stream_new(@"type": *python_c.PyTypeObject) !*StreamTransportObject 
 
     python_c.initialize_object_fields(instance, &.{"ob_base", "fd", "protocol_type", "closed"});
 
+    // Explicit null for all Python object fields (free-threading safety)
+    instance.protocol = null;
+    instance.protocol_data_received = null;
+    instance.protocol_eof_received = null;
+    instance.protocol_connection_lost = null;
+    instance.protocol_pause_writing = null;
+    instance.protocol_resume_writing = null;
+    instance.protocol_get_buffer = null;
+    instance.protocol_buffer_updated = null;
+    instance.protocol_max_read_constant = null;
+    instance.loop = null;
+    instance.socket = null;
+    instance.peername = null;
+    instance.sockname = null;
+
     instance.fd = -1;
     instance.protocol_type = undefined;
     instance.closed = true;
