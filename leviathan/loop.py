@@ -312,8 +312,8 @@ class Loop(_Loop):
             args, stdin=subprocess.DEVNULL if stdin is None else stdin,
             stdout=subprocess.DEVNULL if stdout is None else stdout,
             stderr=subprocess.DEVNULL if stderr is None else stderr,
-            cwd=cwd, env=env, pass_fds=pass_fds,
+            cwd=cwd, env=env, pass_fds=pass_fds if pass_fds is not None else (),
         )
         return await _Loop.subprocess_exec(
-            self, protocol_factory, args, pid=popen.pid,
+            self, protocol_factory, pid=popen.pid,
         )

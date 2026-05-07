@@ -19,11 +19,27 @@ pub const SubprocessTransportObject = extern struct {
 
 fn subprocess_dealloc(self: ?*SubprocessTransportObject) callconv(.c) void {
     const instance = self.?;
+    python_c.PyObject_GC_UnTrack(@ptrCast(instance));
     python_c.py_xdecref(instance.loop);
     python_c.py_xdecref(instance.protocol);
     python_c.py_xdecref(instance.returncode);
     const @"type": *python_c.PyTypeObject = python_c.get_type(@ptrCast(instance));
     @"type".tp_free.?(@ptrCast(instance));
+}
+
+fn subprocess_traverse(self: ?*SubprocessTransportObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
+    return python_c.py_visit(self.?, visit, arg);
+}
+
+fn subprocess_clear(self: ?*SubprocessTransportObject) callconv(.c) c_int {
+    const instance = self.?;
+    python_c.py_xdecref(instance.loop);
+    python_c.py_xdecref(instance.protocol);
+    python_c.py_xdecref(instance.returncode);
+    instance.loop = null;
+    instance.protocol = null;
+    instance.returncode = null;
+    return 0;
 }
 
 fn subprocess_get_pid(self: ?*SubprocessTransportObject, _: ?PyObject) callconv(.c) ?PyObject {
@@ -72,6 +88,8 @@ const SubprocessMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
 const SubprocessSlots: []const python_c.PyType_Slot = &[_]python_c.PyType_Slot{
     .{ .slot = python_c.Py_tp_new, .pfunc = @ptrCast(@constCast(&python_c.PyType_GenericNew)) },
     .{ .slot = python_c.Py_tp_dealloc, .pfunc = @ptrCast(@constCast(&subprocess_dealloc)) },
+    .{ .slot = python_c.Py_tp_traverse, .pfunc = @ptrCast(@constCast(&subprocess_traverse)) },
+    .{ .slot = python_c.Py_tp_clear, .pfunc = @ptrCast(@constCast(&subprocess_clear)) },
     .{ .slot = python_c.Py_tp_methods, .pfunc = @constCast(SubprocessMethods.ptr) },
     .{ .slot = python_c.Py_tp_doc, .pfunc = @constCast("Leviathan SubprocessTransport.") },
     .{ .slot = 0, .pfunc = null },
@@ -162,8 +180,10 @@ pub fn new_with_pid(
     const self: *SubprocessTransportObject = @ptrCast(
         SubprocessType.?.tp_alloc.?(SubprocessType.?, 0) orelse return error.PythonError
     );
+    // Keep ob_base from tp_alloc — it sets ob_refcnt and ob_type
+    const saved_base = self.ob_base;
     self.* = .{
-        .ob_base = undefined,
+        .ob_base = saved_base,
         .loop = python_c.py_newref(@as(*python_c.PyObject, @ptrCast(loop))),
         .protocol = python_c.py_newref(protocol),
         .pid = pid,
