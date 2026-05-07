@@ -19,7 +19,7 @@ Project now targets Zig 0.15.2 (was 0.14.0). Docs cached at `docs/zig-0.15.2/`.
 | `sigaddset` type mismatch | Switched to `std.posix.sigaddset` |
 | `.metadata()` → `.stat()` | API rename, `.size` field not method |
 | `PyExc_*` C globals | `pub const` → `pub extern var` |
-| jdz_allocator removed | Replaced with `std.heap.GeneralPurposeAllocator` |
+| jdz_allocator removed | Replaced with `std.heap.c_allocator` |
 | `@cImport` no `usingnamespace` | ~100 symbols manually re-exported in `python_c.zig` |
 
 ---
@@ -101,18 +101,18 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 
 ---
 
-## 🔵 Free-Threading Python Support (3.13t / 3.14t)
+## 🔵 Free-Threading Python Support (3.13t / 3.14t) — ✅ DONE
 
-### Status: ~95% functional
+### Status: 100% functional (all 4 Python versions pass)
 
 | Test set | 3.13t | 3.14t |
 |----------|-------|-------|
+| Pytest full suite (137 tests) | ✅ PASS | ✅ PASS |
 | Import, event loop, futures, tasks | ✅ | ✅ |
 | Signals, scheduling, asyncgens | ✅ | ✅ |
 | Stream transport | ✅ | ✅ |
 | FD watchers | ✅ | ✅ |
 | Subprocess exec | ✅ | ✅ |
-| Pytest full suite | ❌ hangs (pytest runner, not leviathan) | not yet tested |
 
 ### Bugs Found & Fixed
 
@@ -126,10 +126,14 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 | 6 | `BTreeHasElements` panic on `loop.close()` | Watchers not cleaned up before BTree deinit | Watcher cleanup loop in `loop.release()` |
 | 7 | `py_decref` → `_Py_atomic_load_uint32_relaxed` undefined | CPython's `Py_INCREF`/`Py_DECREF` are static inline — not exported from libpython | **Switched to CPython stable ABI `Py_IncRef`/`Py_DecRef`** — properly exported, handles all free-threading internally |
 | 8 | GC/refcounting teardown segfault | Module unload + loop close touch freed Python objects | Skip `deinitialize_object_fields` in `loop_clear`, skip `PyObject_GC_UnTrack` + `py_decref(type)` in `loop_dealloc`, skip `module_cleanup` Python cleanup — all gated on `!builtin.single_threaded` |
+| 9 | All free-threading tests SEGFAULT (root cause) | `@cImport` didn't see `Py_GIL_DISABLED` macro → wrong `PyObject` struct layout (used `ob_refcnt` offset instead of `ob_ref_local`/`ob_ref_shared`/`ob_tid`) → `Py_IncRef`/`Py_DecRef` corrupted memory | `addCMacro("Py_GIL_DISABLED", "1")` in `build.zig` when `python_is_gil_disabled`. This ensures `@cImport` sees the correct struct layout matching the linked `libpython3.13t.so`. |
 
-### Remaining Issue
+### Lessons Learned
 
-- **Pytest + free-threading Python hangs**: `leviathan.run()` works standalone on 3.13t (asyncio.run, loop create/close, asyncgen, subprocess). Through pytest, the test runner hangs on the first test. Not a leviathan bug — same tests pass standalone. Likely pytest's signal handling or test isolation interacts with free-threading Python.
+- **Use CPython stable ABI**: `Py_IncRef`/`Py_DecRef` (exported from libpython) instead of manual refcounting via `Py_INCREF`/`Py_DECREF` (static inlines, not linkable).
+- **uvloop pattern**: `freethreading_compatible=True` + `nogil` annotations let Cython generate GIL-safe code. We achieve the same by delegating to CPython's stable ABI functions.
+- **`addCMacro` is critical**: Even when including free-threading headers, Zig's `@cImport` may not propagate preprocessor defines from included files. Explicit `addCMacro("Py_GIL_DISABLED", "1")` ensures correct struct layout.
+- **Pointer validity guards**: `< 0xFFFF` check on all refcounting functions prevents segfaults from garbage pointers during teardown.
 
 ---
 
@@ -144,4 +148,4 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
-- **Test counts:** 137 Python tests passing on 3.13 + 3.14; standalone tests pass on 3.13t (pytest hangs)
+- **Test counts:** 137 Python tests passing on all 4 versions (3.13, 3.14, 3.13t, 3.14t) + zig tests green
