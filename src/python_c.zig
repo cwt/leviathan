@@ -126,6 +126,10 @@ pub const PyObject_Str = _c.PyObject_Str;
 pub const PyObject_ClearWeakRefs = _c.PyObject_ClearWeakRefs;
 pub const PyObject_GC_UnTrack = _c.PyObject_GC_UnTrack;
 
+pub const PyDict_New = _c.PyDict_New;
+pub const PyDict_SetItemString = _c.PyDict_SetItemString;
+pub const PyObject_Call = _c.PyObject_Call;
+
 pub const PyOS_BeforeFork = _c.PyOS_BeforeFork;
 pub const PyOS_AfterFork_Parent = _c.PyOS_AfterFork_Parent;
 pub const PyOS_AfterFork_Child = _c.PyOS_AfterFork_Child;

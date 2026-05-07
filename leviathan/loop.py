@@ -299,3 +299,21 @@ class Loop(_Loop):
         if hasattr(srv, 'server_ref'):
             srv.server_ref = server
         return server
+
+    async def subprocess_exec(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        args: Any, *, stdin: Any = None, stdout: Any = None,
+        stderr: Any = None, cwd: str|None = None,
+        env: dict[str, str]|None = None, pass_fds: Any = None,
+        **kwargs: Any,
+    ) -> tuple[Any, Any]:
+        import subprocess
+        popen = subprocess.Popen(
+            args, stdin=subprocess.DEVNULL if stdin is None else stdin,
+            stdout=subprocess.DEVNULL if stdout is None else stdout,
+            stderr=subprocess.DEVNULL if stderr is None else stderr,
+            cwd=cwd, env=env, pass_fds=pass_fds,
+        )
+        return await _Loop.subprocess_exec(
+            self, protocol_factory, args, pid=popen.pid,
+        )

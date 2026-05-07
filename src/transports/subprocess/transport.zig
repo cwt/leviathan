@@ -156,24 +156,9 @@ pub fn start_exit_watcher(transport: *SubprocessTransportObject, loop: *LoopObje
     });
 }
 
-pub fn spawn_and_create(
-    protocol: PyObject, loop: *LoopObject, program: []const u8, argv: []const []const u8
+pub fn new_with_pid(
+    protocol: PyObject, loop: *LoopObject, pid: std.posix.pid_t
 ) !*SubprocessTransportObject {
-    _ = argv;
-
-    python_c.PyOS_BeforeFork();
-    const pid = try std.posix.fork();
-    if (pid == 0) {
-        python_c.PyOS_AfterFork_Child();
-        const devnull = std.posix.openZ("/dev/null", .{ .ACCMODE = .RDWR }, 0) catch std.os.linux.exit(1);
-        _ = std.posix.dup2(devnull, 0) catch {};
-        _ = std.posix.dup2(devnull, 1) catch {};
-        _ = std.posix.dup2(devnull, 2) catch {};
-        var child_argv = [_:null]?[*:0]const u8{ @ptrCast(program.ptr), null };
-        _ = std.posix.execveZ(@ptrCast(program.ptr), &child_argv, &[_:null]?[*:0]const u8{null}) catch std.os.linux.exit(127);
-    }
-    python_c.PyOS_AfterFork_Parent();
-
     const self: *SubprocessTransportObject = @ptrCast(
         SubprocessType.?.tp_alloc.?(SubprocessType.?, 0) orelse return error.PythonError
     );
@@ -186,7 +171,5 @@ pub fn spawn_and_create(
         .pidfd_task_id = 0,
         .closed = false,
     };
-
-    try start_exit_watcher(self, loop);
     return self;
 }

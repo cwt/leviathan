@@ -296,7 +296,10 @@ pub fn init(self: *IO, loop: *Loop, allocator: std.mem.Allocator) !void {
     self.ring = try std.os.linux.IoUring.init(TotalTasksItems, 0);
     errdefer self.ring.deinit();
 
-    self.eventfd = try std.posix.eventfd(0, std.os.linux.EFD.NONBLOCK);
+    // Mark io_uring fd CLOEXEC so child processes don't inherit it
+    _ = std.posix.fcntl(self.ring.fd, std.posix.F.SETFD, @intCast(std.posix.FD_CLOEXEC)) catch {};
+
+    self.eventfd = try std.posix.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
     errdefer std.posix.close(self.eventfd);
 
     self.blocking_ready_tasks = try allocator.alloc(std.os.linux.io_uring_cqe, TotalTasksItems);
