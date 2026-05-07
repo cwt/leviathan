@@ -299,7 +299,12 @@ inline fn z_stream_init(self: *StreamTransportObject, args: ?PyObject, kwargs: ?
     }
 
     const leviathan_loop: *LoopObject = @ptrCast(loop.?);
-    try stream_init_configuration(self, py_protocol.?, leviathan_loop, @intCast(fd), false);
+
+    // Incref borrowed reference — free-threading GC can free it concurrently
+    const protocol_ref = python_c.py_newref(py_protocol.?);
+    defer python_c.py_decref(protocol_ref);
+
+    try stream_init_configuration(self, protocol_ref, leviathan_loop, @intCast(fd), false);
 
     return 0;
 }

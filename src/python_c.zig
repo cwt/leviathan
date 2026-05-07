@@ -306,6 +306,7 @@ inline fn get_refcnt_split(obj: *Python.PyObject) *[2]u32 {
 }
 
 pub inline fn py_incref(op: *Python.PyObject) void {
+    if (@intFromPtr(op) <= 0xFFFF) return;
     if (builtin.single_threaded) {
         const refcnt_ptr = get_refcnt_split(op);
         refcnt_ptr.*[0] +|= 1;
@@ -334,6 +335,7 @@ inline fn _Py_IsImmortal(refcnt: Python.Py_ssize_t) bool {
 }
 
 pub fn py_decref(op: *Python.PyObject) void {
+    if (@intFromPtr(op) <= 0xFFFF) return;
     if (builtin.single_threaded) {
         const ref_ptr = get_refcnt_ptr(op);
         var ref = ref_ptr.*;
@@ -368,7 +370,9 @@ pub fn py_decref(op: *Python.PyObject) void {
 
 pub inline fn py_xdecref(op: ?*Python.PyObject) void {
     if (op) |o| {
-        py_decref(o);
+        if (@intFromPtr(o) > 0xFFFF) {
+            py_decref(o);
+        }
     }
 }
 
