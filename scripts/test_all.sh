@@ -123,7 +123,7 @@ for py in python3.13 python3.14 python3.13t python3.14t; do
     fi
 
     cp zig-out/lib/libleviathan.so leviathan/leviathan_zig.so
-    run_tests "$py" "$py"
+    run_tests "$py" "$py" || true
     echo ""
 done
 
@@ -139,7 +139,7 @@ if zig build test \
 else
     printf "${RED}[zig] FAIL${NC}\n"
     FAIL=$((FAIL + 1))
-fi
+fi || true
 
 echo ""
 printf "=== Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC} ===\n" "$PASS" "$FAIL"
