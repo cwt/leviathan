@@ -314,6 +314,11 @@ class Loop(_Loop):
             stderr=subprocess.DEVNULL if stderr is None else stderr,
             cwd=cwd, env=env, pass_fds=pass_fds if pass_fds is not None else (),
         )
-        return await _Loop.subprocess_exec(
-            self, protocol_factory, pid=popen.pid,
-        )
+        try:
+            return await _Loop.subprocess_exec(
+                self, protocol_factory, pid=popen.pid,
+            )
+        except BaseException:
+            popen.kill()
+            popen.wait()
+            raise
