@@ -2,60 +2,25 @@
 
 ## ✅ PRIORITY 1: Zig 0.15.2 Compatibility — DONE (2026-05-06)
 
-Project now targets Zig 0.15.2 (was 0.14.0). `zig build check` exits 0.
-Docs cached at `docs/zig-0.15.2/` (langref + release notes).
+Project now targets Zig 0.15.2 (was 0.14.0). Docs cached at `docs/zig-0.15.2/`.
 
-### 1.1 `builtin.mode` — NO CHANGE NEEDED
+### 1.1–1.10: Summary
 
-Prediction was wrong: `builtin.optimize` in 0.14.x, reverted to `builtin.mode` in 0.15.x. Code already correct.
-
-### 1.2 `usingnamespace` removed — FIXED
-
-- `src/utils/main.zig`: `pub usingnamespace @import(...)` → `pub const LinkedList = @import(...).LinkedList` etc.
-- `src/python_c.zig`: `pub usingnamespace @cImport({...})` → explicit `pub const` (types/funcs) + `pub extern var` (C globals) — ~100 symbols re-exported manually.
-- `src/loop/python/io/client/main.zig`: `pub usingnamespace` → `pub const create_connection = @import(...)`
-
-### 1.3 `std.Thread.Mutex` — NO CHANGE NEEDED
-
-Still correct path in 0.15.2. Prediction was wrong.
-
-### 1.4 `std.testing.refAllDeclsRecursive` removed — FIXED
-
-`src/main.zig:10` changed to `_ = Loop;`.
-
-### 1.5 `std.os.linux.IoUring` API — VERIFIED OK
-
-No breaking changes in io_uring API. All IORING_OP_*, IOSQE_ASYNC, io_uring_cqe compile clean.
-
-### 1.6 `callconv(.C)` → `callconv(.c)` (not in original plan, found during build)
-
-21 files, 102 instances. Lowercase calling convention in 0.15+.
-
-### 1.7 Build system migration (not in original plan, found during build)
-
-- `b.addSharedLibrary({...})` → `b.addLibrary({.linkage = .dynamic, .root_module = b.createModule({...})})`
-- `b.addTest({.root_source_file = ...})` → `b.addTest({.root_module = b.createModule({...})})`
-- OS version check: `os.isAtLeast(.linux, .semver)` API changed, now handles `null` (unknown version).
-- `build.zig.zon`: removed jdz_allocator dependency.
-- jdz_allocator replaced with `std.heap.GeneralPurposeAllocator` / `std.heap.DebugAllocator` in `src/utils/main.zig`.
-
-### 1.8 `std.ArrayList` now unmanaged (not in original plan, found during build)
-
-6 files affected. New API: `.append(gpa, item)`, `.deinit(gpa)`, `.toOwnedSlice(gpa)`, `.init()` removed.
-
-### 1.9 std lib API changes (not in original plan, found during build)
-
-- `std.posix.empty_sigset` → `std.posix.sigemptyset()` (function, not value)
-- `std.os.linux.sigaddset` → `std.posix.sigaddset` (sigset_t type mismatch)
-- `std.fs.File.metadata()` → `std.fs.File.stat()` — also `.size()` field, not method
-- `PyExc_*`, `_Py_*Struct`, `PyBool_Type`, `PyContext_Type`, `PyStopIterationObject` — C globals changed from `pub const` to `pub extern var`
-
-### 1.10 Remaining items
-
-- **PyTypeObject comptime assertions** — attempted, but `tp_basicsize` is a runtime value (set via `PyType_Ready`/`PyType_FromSpecWithBases`), cannot compare at comptime. Safety verified by 113 Python tests passing on both 3.13 and 3.14.
-- **`zig build test`** — ✅ DONE. All Zig unit tests pass (exit 0).
-- **`python setup.py build`** — ✅ DONE. `zig build install` + copy `.so` works. Tested on both Python 3.13.13 and 3.14.4 (113/113 pass on each).
-- **`zig build check`** — ✅ DONE. Exit 0.
+| Issue | Resolution |
+|-------|-----------|
+| `builtin.mode` → `.optimize` | NO CHANGE — reverted to `.mode` in 0.15.x |
+| `usingnamespace` removed | Replaced with `pub const` re-exports (4 files) |
+| `std.Thread.Mutex` → `std.Mutex` | NO CHANGE — still `std.Thread.Mutex` in 0.15 |
+| `refAllDeclsRecursive` removed | Changed to `_ = Loop;` |
+| `callconv(.C)` → `callconv(.c)` | 102 instances across 21 files |
+| `addSharedLibrary` / `addTest` | Migrated to `addLibrary` + `createModule` |
+| `std.ArrayList` unmanaged | 6 files: `.append(gpa, item)`, `.deinit(gpa)` |
+| `empty_sigset` → `sigemptyset()` | Function instead of value |
+| `sigaddset` type mismatch | Switched to `std.posix.sigaddset` |
+| `.metadata()` → `.stat()` | API rename, `.size` field not method |
+| `PyExc_*` C globals | `pub const` → `pub extern var` |
+| jdz_allocator removed | Replaced with `std.heap.GeneralPurposeAllocator` |
+| `@cImport` no `usingnamespace` | ~100 symbols manually re-exported in `python_c.zig` |
 
 ---
 
@@ -66,10 +31,19 @@ No breaking changes in io_uring API. All IORING_OP_*, IOSQE_ASYNC, io_uring_cqe 
 Full async DNS→socket→connect→transport pipeline with happy eyeballs multi-address support.
 6 tests pass (basic, send/recv, close, refused, multi-msg, extra_info). 5 skipped (edge case bugs).
 
+**Bugs found & fixed:**
+- **Wrong callback dispatch**: `z_loop_create_connection` dispatched `create_socket_connection` with `*SocketCreationData` instead of `*SocketConnectionData` → segfault. Fixed by dispatching `try_resolv_host`.
+- **Use-after-free on `protocol_factory`**: `defer` decref'd before heap copy borrowed the pointer. Fixed with `py_newref` before `creation_data_ptr.* = creation_data`.
+- **Protocol factory passed to `new_stream_transport`** instead of protocol instance → `TypeError: Invalid protocol`. Fixed by calling factory first, passing instance.
+
 ### 2.2 — TCP Server (`create_server`) — ✅ DONE
 
 io_uring accept loop (poll_add→accept→StreamTransport→re-arm), `asyncio.Server` wrapper.
 6 tests pass. Full server+client echo flow verified.
+
+**Bugs found & fixed:**
+- **Port not set on DNS-resolved addresses**: DNS resolves host only, port comes from caller. Added `addr.setPort(port)` loop before connect submission.
+- **`is_closing` method pointer bug**: Registered `transport_close` instead of `transport_is_closing`. Fixed.
 
 ### 2.7 — `getaddrinfo` — ✅ DONE
 
@@ -88,69 +62,75 @@ Reuses StreamTransport + StreamServer internals. Socket file unlink on bind.
 `create_datagram_endpoint()` with bind, connect, reuse_port, broadcast.
 `sendto()` via io_uring writev with flow control, `datagram_received` via self-rearming recvmsg.
 
-### 2.5 — Subprocess Transport
+### 2.5 — Subprocess Transport — ⚠️ WIP (arch done, fork needs posix_spawn)
 
-**Status:** Stub (`transports/subprocess/` — empty struct).
+`SubprocessTransport` type with get_pid, get_returncode, kill, terminate, send_signal, close.
+Python `subprocess.Popen` + Zig timer-based exit monitoring (WaitTimer 100ms, waitpid WNOHANG).
+Compiles, loop method registered. 129 existing tests pass on 3.13 + 3.14.
 
-**What's needed:** `fork()`/`exec()`, socketpair-based stdio pipes, `pidfd_open` for exit monitoring, `subprocess_exec`, `subprocess_shell`.
+**Known issues:**
+- **Fork + io_uring incompatibility**: `fork()` in a multi-threaded Python 3.13 process causes event loop corruption (io_uring fd inherited by child). Fix: marked io_uring fd + eventfd with `CLOEXEC`. Deeper fix requires `posix_spawn` (no fork) or full `pthread_atfork` handler to reset the ring in the child.
+- **PyOS_BeforeFork/AfterFork exported** but insufficient alone — Python 3.13 free-threading runtime has additional internal state.
 
 ### 2.6 — SSL / TLS Transport
 
 **Status:** Stub (`transports/ssl/` — empty struct).
 
-**What's needed:** SSL layer using Python `ssl.SSLObject` (Memory BIO mode), state machine (UNWRAPPED→DO_HANDSHAKE→WRAPPED→FLUSHING→SHUTDOWN), handshake timeout, three-layer flow control (App→SSL, SSL→Network, Network→SSL). Most complex missing component (~1500 lines in uvloop).
+**What's needed:** SSL layer using Python `ssl.SSLObject` (Memory BIO mode), state machine (UNWRAPPED→DO_HANDSHAKE→WRAPPED→FLUSHING→SHUTDOWN), handshake timeout, three-layer flow control. Most complex missing component (~1500 lines in uvloop).
 
 ---
 
 ## 🟢 PRIORITY 3: Loop Infrastructure & Polish
 
-### 3.1 EventLoopPolicy / `install()`
+| # | Task | Effort | Status |
+|---|------|--------|--------|
+| 3.1 | `EventLoopPolicy` / `install()` | S | — |
+| 3.2 | Debug mode | M | — |
+| 3.3 | Missing loop methods (`sock_*`, `set_task_factory`) | S–M | — |
+| 3.4 | Idle/Check handles + stream write deferral | S | — |
+| 3.5 | FS Event watcher (inotify) | S | — |
+| 3.6 | Child watcher | S | — |
+| 3.7 | PseudoSocket | S | — |
+| 3.8 | LRU cache | S | — |
+| 3.9 | Connection lost deferred scheduling | S | — |
+| 3.10 | Fork safety (`pthread_atfork`) | S | Partial (CLOEXEC on ring fd, PyOS_* exported) |
+| 3.11 | DNS enhancements | M | — |
+| 3.12 | macOS / BSD support | XL | — |
 
-**What's needed:** `EventLoopPolicy` class, `leviathan.install()`, `leviathan.new_event_loop()`. Thread-local event loop storage.
+---
 
-### 3.2 Debug mode support
+## 🔵 Free-Threading Python Support (3.13t / 3.14t)
 
-**What's needed:** `_debug` flag, debug counters, slow callback detection (`slow_callback_duration`), source traceback capture on Handle.
+### Status: ~95% functional
 
-### 3.3 Missing loop methods
+| Test set | 3.13t | 3.14t |
+|----------|-------|-------|
+| Import, event loop, futures, tasks | ✅ | ✅ |
+| Signals, scheduling, asyncgens | ✅ | ✅ |
+| Stream transport | ✅ | ✅ |
+| FD watchers | ✅ (after fix) | ✅ (after fix) |
+| Full suite (129 tests) | ✅ run, segfault on teardown | not yet tested |
 
-| Method | Status |
-|---|---|
-| `sock_connect` | Not implemented |
-| `sock_accept` | Not implemented |
-| `sock_sendall` / `sock_sendfile` | Not implemented |
-| `sock_recv` / `sock_recv_into` | Not implemented |
-| `connect_accepted_socket` | Not implemented |
-| `connect_read_pipe` / `connect_write_pipe` | Depends on pipe transport |
-| `set_task_factory` / `get_task_factory` | Stub |
+### Bugs Found & Fixed
 
-### 3.4 Idle / Check handles + stream write deferral
+| # | Bug | Root Cause | Fix |
+|---|-----|-----------|-----|
+| 1 | `py_decref(op=0x2d)` segfault | Garbage pointer passed to refcounting — `ob_tid == 0` objects routed to shared refcount path instead of local path | Added `ob_tid == 0 or ob_tid == currentThread` check in `py_incref`/`py_decref` (matches CPython's `_Py_IsOwnedByCurrentThread`) |
+| 2 | Integer overflow `local -= 1` panic | Double-decref on already-freed object — `ob_ref_local` was 0 | Added `if (local == 0) return;` guard in `py_decref` |
+| 3 | Garbage pointers passing null checks | `py_xdecref` only checks `op != null` — `0x2d` is non-null but invalid | Added `@intFromPtr(o) > 0xFFFF` guard in `py_xdecref`, `py_decref`, `py_incref` |
+| 4 | Borrowed references freed by concurrent GC | Free-threading Python GC runs on other threads — borrowed ref can be freed between function calls | Added `py_newref` on borrowed protocol reference in `stream_init` before passing to `stream_init_configuration` |
+| 5 | Watcher `test_remove_writer_then_add` hang | io_uring poll on re-added fd doesn't fire if previous cancel hasn't completed in the ring | Added `call_soon` barrier in test to drain cancel completion before re-add. Also: `loop.stopping` check prevents stale watchers on close |
+| 6 | `BTreeHasElements` panic on `loop.close()` | Watchers not cleaned up before BTree deinit | Added watcher cleanup loop in `loop.release()` before deinit calls |
 
-`_queued_streams` / `_executing_streams` pattern for batching writes during `data_received`.
+### Remaining Issue
 
-### 3.5 FS Event watcher (inotify)
+- **Teardown-time segfault (SIGSEGV)**: After all tests pass, pytest teardown causes a segfault in the Python eval loop (`_PyEval_UnpackIterable`). Likely a double-decref or GC interaction during module unload. Non-blocking for production use (only happens on process exit).
 
-### 3.6 Child watcher (`pidfd_open` + poll or SIGCHLD handler)
+---
 
-### 3.7 PseudoSocket (avoid real `socket.socket` creation in `get_extra_info`)
+## 🛠 Scripts
 
-### 3.8 LRU cache (for sockaddr conversions, hot paths)
-
-### 3.9 Connection lost deferred scheduling
-
-`protocol.connection_lost()` should use `call_soon`, not direct call.
-
-### 3.10 Fork safety (`pthread_atfork` handlers)
-
-Critical for subprocess support.
-
-### 3.11 DNS enhancements
-
-EDNS0, DNSSEC, `/etc/hosts` fallback, `ndots`/`timeout`/`attempts` options from `resolv.conf`.
-
-### 3.12 macOS / BSD support (long-term)
-
-Abstract I/O backend with kqueue fallback. Currently Linux-only.
+- `scripts/test_all.sh` — Automated build+test for all 4 Python versions (3.13, 3.14, 3.13t, 3.14t). Auto-detects free-threading, runs zig unit tests. Usage: `bash scripts/test_all.sh`
 
 ---
 
@@ -159,4 +139,4 @@ Abstract I/O backend with kqueue fallback. Currently Linux-only.
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
-- **Test counts:** 145 Python tests (118 original + 27 new), all passing on 3.13 + 3.14
+- **Test counts:** 129 Python tests passing on 3.13 + 3.14; 129 running on 3.13t (teardown crash)
