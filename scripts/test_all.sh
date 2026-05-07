@@ -3,6 +3,13 @@
 # Usage: bash scripts/test_all.sh
 set -eu
 
+# Trap signals so child processes are cleaned up on CTRL-C
+cleanup_pids() {
+    jobs -p | xargs -r kill 2>/dev/null || true
+    wait 2>/dev/null || true
+}
+trap cleanup_pids EXIT INT TERM
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
@@ -52,7 +59,7 @@ run_tests() {
     local py="$1" label="$2" cmd=""
     printf "${YELLOW}[%s]${NC} Running tests...\n" "$label"
     if has_timeout; then
-        cmd="$(get_timeout_cmd) 120 $py"
+        cmd="$(get_timeout_cmd) -k 5 120 $py"
     else
         cmd="$py"
     fi
