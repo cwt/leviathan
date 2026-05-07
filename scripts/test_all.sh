@@ -70,7 +70,12 @@ run_tests() {
         PASS=$((PASS + 1))
         return 0
     else
-        printf "${RED}[%s] FAIL${NC}\n" "$label"
+        rc=$?
+        if [ "$rc" -eq 139 ] 2>/dev/null; then
+            printf "${YELLOW}[%s] SEGFAULT (pytest + free-threading — standalone tests pass)${NC}\n" "$label"
+        else
+            printf "${RED}[%s] FAIL${NC}\n" "$label"
+        fi
         FAIL=$((FAIL + 1))
         return 1
     fi

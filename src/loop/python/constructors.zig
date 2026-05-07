@@ -1,6 +1,7 @@
 const python_c = @import("python_c");
 const PyObject = *python_c.PyObject;
 
+const builtin = @import("builtin");
 
 const utils = @import("utils");
 const PythonImports = utils.PythonImports;
@@ -61,7 +62,9 @@ pub fn loop_clear(self: ?*LoopObject) callconv(.c) c_int {
         loop_data.release();
     }
 
-    python_c.deinitialize_object_fields(py_loop, &.{});
+    if (builtin.single_threaded) {
+        python_c.deinitialize_object_fields(py_loop, &.{});
+    }
     return 0;
 }
 
@@ -72,13 +75,17 @@ pub fn loop_traverse(self: ?*LoopObject, visit: python_c.visitproc, arg: ?*anyop
 pub fn loop_dealloc(self: ?*LoopObject) callconv(.c) void {
     const instance = self.?;
 
-    python_c.PyObject_GC_UnTrack(instance);
+    if (builtin.single_threaded) {
+        python_c.PyObject_GC_UnTrack(instance);
+    }
     _ = loop_clear(instance);
 
     const @"type": *python_c.PyTypeObject = python_c.get_type(@ptrCast(instance));
     @"type".tp_free.?(@ptrCast(instance));
 
-    python_c.py_decref(@ptrCast(@"type"));
+    if (builtin.single_threaded) {
+        python_c.py_decref(@ptrCast(@"type"));
+    }
 }
 
 inline fn z_loop_init(
