@@ -105,3 +105,37 @@ pub fn transport_set_protocol(self: ?*StreamTransportObject, new_protocol: ?PyOb
 
     return python_c.get_py_none();
 }
+
+pub fn transport_force_close(self: ?*StreamTransportObject, exc: ?PyObject) callconv(.c) ?PyObject {
+    const instance = self.?;
+
+    if (instance.closed) {
+        return python_c.get_py_none();
+    }
+    instance.closed = true;
+
+    const read_transport = utils.get_data_ptr2(ReadTransport, "read_transport", instance);
+    const write_transport = utils.get_data_ptr2(WriteTransport, "write_transport", instance);
+
+    read_transport.close() catch {};
+    write_transport.close() catch {};
+
+    instance.is_reading = false;
+    instance.is_writing = false;
+
+    const fd = instance.fd;
+    if (fd >= 0) {
+        _ = std.os.linux.close(fd);
+        instance.fd = -1;
+    }
+
+    const exc_arg = exc orelse python_c.get_py_none();
+    defer python_c.py_decref(exc_arg);
+
+    const connection_lost = instance.protocol_connection_lost orelse return python_c.get_py_none();
+    const ret = python_c.PyObject_CallOneArg(connection_lost, exc_arg)
+        orelse return null;
+    python_c.py_decref(ret);
+
+    return python_c.get_py_none();
+}

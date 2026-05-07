@@ -22,6 +22,12 @@ const PythonStreamMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodD
         .ml_flags = python_c.METH_NOARGS
     },
     python_c.PyMethodDef{
+        .ml_name = "_force_close\x00",
+        .ml_meth = @ptrCast(&Lifecyle.transport_force_close),
+        .ml_doc = "Force close the transport\x00",
+        .ml_flags = python_c.METH_O
+    },
+    python_c.PyMethodDef{
         .ml_name = "is_closing\x00",
         .ml_meth = @ptrCast(&Lifecyle.transport_is_closing),
         .ml_doc = "Return True if the transport is closing or is closed\x00",

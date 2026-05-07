@@ -215,6 +215,155 @@ class Loop(_Loop):
         else:
             thread.join()
 
+    async def create_connection(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        host: str|None = None, port: int|None = None, *,
+        ssl: Any = None, family: int = 0, proto: int = 0,
+        flags: int = 0, sock: Any = None,
+        local_addr: tuple[str, int]|None = None,
+        server_hostname: str|None = None,
+        ssl_handshake_timeout: float|None = None,
+        ssl_shutdown_timeout: float|None = None,
+        happy_eyeballs_delay: float|None = None,
+        interleave: int|None = None,
+        all_errors: bool = False,
+    ) -> tuple[asyncio.Transport, asyncio.BaseProtocol]:
+        if ssl is not None:
+            return await self._create_ssl_connection(
+                protocol_factory, host, port, ssl=ssl,
+                family=family, proto=proto, flags=flags, sock=sock,
+                local_addr=local_addr, server_hostname=server_hostname,
+                ssl_handshake_timeout=ssl_handshake_timeout,
+                ssl_shutdown_timeout=ssl_shutdown_timeout,
+                happy_eyeballs_delay=happy_eyeballs_delay,
+                interleave=interleave, all_errors=all_errors,
+            )
+        # Only pass non-None/non-default kwargs
+        kwargs = {}
+        if ssl is not None:
+            kwargs["ssl"] = ssl
+        if family:
+            kwargs["family"] = family
+        if proto:
+            kwargs["proto"] = proto
+        if sock is not None:
+            kwargs["sock"] = sock
+        if local_addr is not None:
+            kwargs["local_addr"] = local_addr
+        if server_hostname is not None:
+            kwargs["server_hostname"] = server_hostname
+        if ssl_handshake_timeout is not None:
+            kwargs["ssl_handshake_timeout"] = ssl_handshake_timeout
+        if ssl_shutdown_timeout is not None:
+            kwargs["ssl_shutdown_timeout"] = ssl_shutdown_timeout
+        if happy_eyeballs_delay is not None:
+            kwargs["happy_eyeballs_delay"] = happy_eyeballs_delay
+        if interleave is not None:
+            kwargs["interleave"] = interleave
+        if all_errors:
+            kwargs["all_errors"] = all_errors
+
+        return await _Loop.create_connection(
+            self, protocol_factory, host, port, **kwargs,
+        )
+
+    async def _create_ssl_connection(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        host: str|None, port: int|None, *,
+        ssl: Any, family: int, proto: int, flags: int, sock: Any,
+        local_addr: Any, server_hostname: str|None,
+        ssl_handshake_timeout: float|None, ssl_shutdown_timeout: float|None,
+        happy_eyeballs_delay: float|None, interleave: int|None,
+        all_errors: bool,
+    ) -> tuple[asyncio.Transport, asyncio.BaseProtocol]:
+        import ssl as ssl_module
+
+        sslcontext = ssl
+        sni = server_hostname or host
+
+        incoming = ssl_module.MemoryBIO()
+        outgoing = ssl_module.MemoryBIO()
+        sslobj = sslcontext.wrap_bio(
+            incoming, outgoing,
+            server_side=False,
+            server_hostname=sni,
+        )
+
+        waiter = self.create_future()
+        app_protocol = protocol_factory()
+
+        class SP(asyncio.BufferedProtocol):
+            def __init__(self):
+                self._buf = bytearray(65536)
+                self._view = memoryview(self._buf)
+                self._hs = False
+            def get_buffer(self, n):
+                return self._view[:n]
+            def buffer_updated(self, n):
+                incoming.write(self._buf[:n])
+                if not self._hs: self._h()
+                else: self._r()
+            def connection_made(self, t):
+                self._t = t
+                self._h()
+            def connection_lost(self, e):
+                pass
+            def eof_received(self):
+                return False
+            def _h(self):
+                try:
+                    sslobj.do_handshake()
+                except ssl_module.SSLWantReadError:
+                    self._f()
+                except ssl_module.SSLWantWriteError:
+                    self._f()
+                except Exception as exc:
+                    if not waiter.done():
+                        waiter.set_exception(exc)
+                else:
+                    self._hs = True
+                    if not waiter.done():
+                        waiter.set_result(None)
+                    self._f()
+                    app_protocol.connection_made(self._t)
+            def _r(self):
+                while True:
+                    try:
+                        d = sslobj.read(65536)
+                    except ssl_module.SSLWantReadError:
+                        break
+                    except (ssl_module.SSLSyscallError, ssl_module.SSLError):
+                        break
+                    if not d:
+                        break
+                    app_protocol.data_received(d)
+            def _f(self):
+                d = outgoing.read()
+                if d:
+                    self._t.write(d)
+
+        transport, _ = await _Loop.create_connection(
+            self, SP, host, port,
+        )
+
+        try:
+            await waiter
+        except BaseException:
+            transport.close()
+            raise
+
+        return transport, app_protocol
+
+    async def _create_ssl_server(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        host: str|None, port: int|None, *,
+        family: int, flags: int, sock: Any, backlog: int,
+        ssl: Any, reuse_address: bool|None, reuse_port: bool|None,
+        ssl_handshake_timeout: float|None, ssl_shutdown_timeout: float|None,
+        start_serving: bool,
+    ) -> "Server":
+        raise NotImplementedError("SSL server is not yet implemented")
+
     async def create_server(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],
         host: str|None = None, port: int|None = None, *,
@@ -227,11 +376,27 @@ class Loop(_Loop):
     ) -> "Server":
         from .server import Server
         if ssl is not None:
-            raise NotImplementedError("SSL is not supported yet")
+            return await self._create_ssl_server(
+                protocol_factory, host, port,
+                family=family, flags=flags, sock=sock, backlog=backlog,
+                ssl=ssl, reuse_address=reuse_address, reuse_port=reuse_port,
+                ssl_handshake_timeout=ssl_handshake_timeout,
+                ssl_shutdown_timeout=ssl_shutdown_timeout,
+                start_serving=start_serving,
+            )
+        kwargs = {}
+        if family:
+            kwargs["family"] = family
+        if flags:
+            kwargs["flags"] = flags
+        if sock is not None:
+            kwargs["sock"] = sock
+        if reuse_address is not None:
+            kwargs["reuse_address"] = reuse_address
+        if reuse_port is not None:
+            kwargs["reuse_port"] = reuse_port
         srv = await _Loop.create_server(
-            self, protocol_factory, host, port,
-            family=family, flags=flags, sock=sock, backlog=backlog,
-            reuse_address=reuse_address, reuse_port=reuse_port,
+            self, protocol_factory, host, port, backlog=backlog, **kwargs,
         )
         server = Server(self, [srv])
         if hasattr(srv, 'server_ref'):
