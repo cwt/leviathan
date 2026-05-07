@@ -229,3 +229,152 @@ async def test_ssl_create_connection_wrong_context():
         transport.close()
 
     t.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_ssl_create_server_handshake(ssl_certs):
+    """SSL server can perform handshake with a threaded SSL client."""
+    server_ctx, key_path, cert_path = ssl_certs
+
+    import socket
+    import threading
+
+    class EchoServer(asyncio.Protocol):
+        def __init__(self):
+            self.transport = None
+            self.received = []
+
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def data_received(self, data):
+            self.received.append(data)
+            self.transport.write(data)
+
+        def connection_lost(self, exc):
+            pass
+
+    loop = asyncio.get_running_loop()
+    srv = await loop.create_server(EchoServer, "127.0.0.1", 0, ssl=server_ctx)
+    addr = srv.sockets[0].getsockname()
+
+    result = {}
+
+    def client():
+        try:
+            client_ctx = ssl.create_default_context()
+            client_ctx.check_hostname = False
+            client_ctx.verify_mode = ssl.CERT_NONE
+            s = socket.socket()
+            s.settimeout(5)
+            s.connect(addr)
+            ss = client_ctx.wrap_socket(s)
+            ss.sendall(b"hello")
+            data = ss.recv(1024)
+            result["got"] = data
+            ss.close()
+        except Exception as e:
+            result["err"] = e
+
+    t = threading.Thread(target=client, daemon=True)
+    t.start()
+
+    await asyncio.sleep(1)
+    srv.close()
+    await asyncio.sleep(0.2)
+
+    t.join(timeout=5)
+    assert result.get("got") == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_ssl_create_server_echo_ssl_client(ssl_certs):
+    """SSL server + leviathan SSL client echo."""
+    server_ctx, key_path, cert_path = ssl_certs
+
+    class EchoServer(asyncio.Protocol):
+        def __init__(self):
+            self.transport = None
+
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def data_received(self, data):
+            self.transport.write(data)
+
+        def connection_lost(self, exc):
+            pass
+
+    loop = asyncio.get_running_loop()
+    srv = await loop.create_server(EchoServer, "127.0.0.1", 0, ssl=server_ctx)
+    addr = srv.sockets[0].getsockname()
+
+    client_ctx = ssl.create_default_context()
+    client_ctx.check_hostname = False
+    client_ctx.verify_mode = ssl.CERT_NONE
+
+    transport, protocol = await loop.create_connection(
+        EchoClient, addr[0], addr[1], ssl=client_ctx,
+    )
+
+    transport.write(b"hello")
+    data = await protocol.data_future
+    assert data == b"hello"
+    transport.close()
+
+    srv.close()
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_ssl_create_server_multiple_connections(ssl_certs):
+    """SSL server handles multiple sequential connections."""
+    server_ctx, key_path, cert_path = ssl_certs
+
+    import socket
+    import threading
+
+    class EchoServer(asyncio.Protocol):
+        def connection_made(self, t):
+            self.t = t
+
+        def data_received(self, d):
+            self.t.write(d)
+
+        def connection_lost(self, e):
+            pass
+
+    loop = asyncio.get_running_loop()
+    srv = await loop.create_server(EchoServer, "127.0.0.1", 0, ssl=server_ctx)
+    addr = srv.sockets[0].getsockname()
+
+    def make_client(msg):
+        result = {}
+
+        def client():
+            try:
+                client_ctx = ssl.create_default_context()
+                client_ctx.check_hostname = False
+                client_ctx.verify_mode = ssl.CERT_NONE
+                s = socket.socket()
+                s.settimeout(5)
+                s.connect(addr)
+                ss = client_ctx.wrap_socket(s)
+                ss.sendall(msg)
+                data = ss.recv(1024)
+                result["got"] = data
+                ss.close()
+            except Exception as e:
+                result["err"] = e
+        return client, result
+
+    for i, msg in enumerate([b"ping", b"pong", b"test"]):
+        client_fn, result = make_client(msg)
+        t = threading.Thread(target=client_fn, daemon=True)
+        t.start()
+        await asyncio.sleep(0.3)
+        t.join(timeout=5)
+        assert result.get("got") == msg, f"Connection {i}: expected {msg}, got {result}"
+
+    srv.close()
+    await asyncio.sleep(0.1)

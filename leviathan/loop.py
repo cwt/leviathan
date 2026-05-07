@@ -362,7 +362,123 @@ class Loop(_Loop):
         ssl_handshake_timeout: float|None, ssl_shutdown_timeout: float|None,
         start_serving: bool,
     ) -> "Server":
-        raise NotImplementedError("SSL server is not yet implemented")
+        from .server import Server
+        import ssl as ssl_module
+
+        sslcontext = ssl
+
+        class SSP(asyncio.BufferedProtocol):
+            def __init__(self):
+                self._buf = bytearray(65536)
+                self._view = memoryview(self._buf)
+                self._hs = False
+                incoming = ssl_module.MemoryBIO()
+                outgoing = ssl_module.MemoryBIO()
+                self._sslobj = sslcontext.wrap_bio(
+                    incoming, outgoing,
+                    server_side=True,
+                )
+                self._incoming = incoming
+                self._outgoing = outgoing
+
+            def get_buffer(self, n):
+                return self._view[:n]
+            def buffer_updated(self, n):
+                self._incoming.write(self._buf[:n])
+                if not self._hs: self._h()
+                else: self._r()
+            def connection_made(self, t):
+                self._raw_t = t
+                self._ap = protocol_factory()
+                self._wrapper = _SSLTransportWrapper(self, self._raw_t)
+                self._h()
+            def connection_lost(self, e):
+                self._ap.connection_lost(e)
+            def eof_received(self):
+                self._ap.eof_received()
+                return False
+            def _h(self):
+                try:
+                    self._sslobj.do_handshake()
+                except ssl_module.SSLWantReadError:
+                    self._f()
+                except ssl_module.SSLWantWriteError:
+                    self._f()
+                except Exception:
+                    self._raw_t.close()
+                else:
+                    self._hs = True
+                    self._f()
+                    self._ap.connection_made(self._wrapper)
+            def _r(self):
+                while True:
+                    try:
+                        d = self._sslobj.read(65536)
+                    except ssl_module.SSLWantReadError:
+                        break
+                    except (ssl_module.SSLSyscallError, ssl_module.SSLError):
+                        break
+                    if not d:
+                        break
+                    self._ap.data_received(d)
+            def _f(self):
+                d = self._outgoing.read()
+                if d:
+                    self._raw_t.write(d)
+
+        class _SSLTransportWrapper:
+            def __init__(self, ssp, raw_t):
+                self._ssp = ssp
+                self._raw_t = raw_t
+
+            def write(self, data):
+                self._ssp._sslobj.write(data)
+                self._ssp._f()
+
+            def close(self):
+                try:
+                    self._ssp._sslobj.unwrap()
+                except (ssl_module.SSLSyscallError, ssl_module.SSLError):
+                    pass
+                self._ssp._f()
+                self._raw_t.close()
+
+            def get_extra_info(self, name, default=None):
+                return self._raw_t.get_extra_info(name, default)
+
+            def is_closing(self):
+                return self._raw_t.is_closing()
+
+            def can_write_eof(self):
+                return self._raw_t.can_write_eof()
+
+            def write_eof(self):
+                self._raw_t.write_eof()
+
+            def abort(self):
+                self._raw_t.abort()
+
+            def get_write_buffer_size(self):
+                return self._raw_t.get_write_buffer_size()
+
+        kwargs = {}
+        if family:
+            kwargs["family"] = family
+        if flags:
+            kwargs["flags"] = flags
+        if sock is not None:
+            kwargs["sock"] = sock
+        if reuse_address is not None:
+            kwargs["reuse_address"] = reuse_address
+        if reuse_port is not None:
+            kwargs["reuse_port"] = reuse_port
+        srv = await _Loop.create_server(
+            self, SSP, host, port, backlog=backlog, **kwargs,
+        )
+        server = Server(self, [srv])
+        if hasattr(srv, 'server_ref'):
+            srv.server_ref = server
+        return server
 
     async def create_server(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],
