@@ -126,6 +126,10 @@ pub const PyObject_Str = _c.PyObject_Str;
 pub const PyObject_ClearWeakRefs = _c.PyObject_ClearWeakRefs;
 pub const PyObject_GC_UnTrack = _c.PyObject_GC_UnTrack;
 
+pub const PyOS_BeforeFork = _c.PyOS_BeforeFork;
+pub const PyOS_AfterFork_Parent = _c.PyOS_AfterFork_Parent;
+pub const PyOS_AfterFork_Child = _c.PyOS_AfterFork_Child;
+
 pub const PyBuffer_Release = _c.PyBuffer_Release;
 
 pub const PyImport_ImportModule = _c.PyImport_ImportModule;
