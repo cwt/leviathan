@@ -392,7 +392,7 @@ class Loop(_Loop):
         )
 
         try:
-            await waiter
+            await asyncio.wait_for(waiter, timeout=ssl_handshake_timeout or 60)
         except BaseException:
             transport.close()
             raise
@@ -626,7 +626,7 @@ class Loop(_Loop):
         )
 
         try:
-            await waiter
+            await asyncio.wait_for(waiter, timeout=60)
         except BaseException:
             transport.close()
             raise
