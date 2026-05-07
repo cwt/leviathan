@@ -268,3 +268,34 @@ class Loop(_Loop):
         if hasattr(srv, 'server_ref'):
             srv.server_ref = server
         return server
+
+    async def create_unix_connection(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        path: str, *, ssl: Any = None,
+        server_hostname: str|None = None,
+        ssl_handshake_timeout: float|None = None,
+        ssl_shutdown_timeout: float|None = None,
+    ) -> tuple[asyncio.Transport, asyncio.BaseProtocol]:
+        if ssl is not None:
+            raise NotImplementedError("SSL is not supported yet")
+        return await _Loop.create_unix_connection(
+            self, protocol_factory, path, ssl=ssl
+        )
+
+    async def create_unix_server(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        path: str, *, backlog: int = 100, ssl: Any = None,
+        ssl_handshake_timeout: float|None = None,
+        ssl_shutdown_timeout: float|None = None,
+        start_serving: bool = True,
+    ) -> "Server":
+        from .server import Server
+        if ssl is not None:
+            raise NotImplementedError("SSL is not supported yet")
+        srv = await _Loop.create_unix_server(
+            self, protocol_factory, path, backlog=backlog,
+        )
+        server = Server(self, [srv])
+        if hasattr(srv, 'server_ref'):
+            srv.server_ref = server
+        return server
