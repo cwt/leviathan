@@ -59,7 +59,7 @@ No breaking changes in io_uring API. All IORING_OP_*, IOSQE_ASYNC, io_uring_cqe 
 
 ---
 
-## 🟡 PRIORITY 2: Network & Transport (4 done, 3 remaining)
+## 🟡 PRIORITY 2: Network & Transport (5 done, 2 remaining)
 
 ### 2.1 — `create_connection` — ✅ DONE
 
@@ -83,11 +83,10 @@ Sync (literal IP) + async callback. 5 tests pass on 3.13 + 3.14.
 Reuses StreamTransport + StreamServer internals. Socket file unlink on bind.
 5 tests pass (connection, server, sockets, missing args, multiple clients).
 
-### 2.3 — Datagram / UDP Transport
+### 2.3 — Datagram / UDP Transport — ✅ DONE
 
-**Status:** Stub (`transports/datagram/` — empty struct).
-
-**What's needed:** Full UDP transport with `recvmsg`/`sendmsg` via io_uring, flow control, broadcast, multicast, `create_datagram_endpoint`.
+`create_datagram_endpoint()` with bind, connect, reuse_port, broadcast.
+`sendto()` via io_uring writev with flow control, `datagram_received` via self-rearming recvmsg.
 
 ### 2.5 — Subprocess Transport
 
@@ -160,4 +159,4 @@ Abstract I/O backend with kqueue fallback. Currently Linux-only.
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
-- **Test counts:** 134 Python tests (118 original + 16 new), all passing on 3.13 + 3.14
+- **Test counts:** 145 Python tests (118 original + 27 new), all passing on 3.13 + 3.14
