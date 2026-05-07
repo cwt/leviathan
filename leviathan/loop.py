@@ -319,6 +319,7 @@ class Loop(_Loop):
                 self, protocol_factory, pid=popen.pid,
             )
         except BaseException:
-            popen.kill()
-            popen.wait()
+            if popen.poll() is None:
+                popen.kill()
+                popen.wait()
             raise

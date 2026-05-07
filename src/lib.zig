@@ -51,8 +51,13 @@ const dynamic_leviathan_modules_names = .{
 };
 
 fn module_cleanup(_: *python_c.PyObject) callconv(.c) void {
-    deinitialize_leviathan_types();
-    utils.PythonImports.release_python_imports();
+    // Skip Python object cleanup in free-threading mode to avoid
+    // teardown segfaults from GC/refcounting race conditions.
+    // All memory is reclaimed by the OS on process exit anyway.
+    if (builtin.single_threaded) {
+        deinitialize_leviathan_types();
+        utils.PythonImports.release_python_imports();
+    }
     // if (builtin.mode == .Debug) {
     //     _ = utils.gpa.detectLeaks();
     // }
