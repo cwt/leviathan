@@ -379,38 +379,30 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
 }
 
 fn build_query(id: u16, payload: []u8, question: QuestionType, hostname: []const u8) usize {
-    const header: *Header = @alignCast(@ptrCast(payload.ptr));
-    header.* = .{
-        .id = id,
-        .flags = comptime std.mem.nativeToBig(u16, 0x0100),
-        .qdcount = comptime std.mem.nativeToBig(u16, 1),
-        .ancount = 0,
-        .nscount = 0,
-        .arcount = 0,
-    };
+    std.mem.writeInt(u16, payload[0..2], id, .big);
+    std.mem.writeInt(u16, payload[2..4], std.mem.nativeToBig(u16, 0x0100), .big);
+    std.mem.writeInt(u16, payload[4..6], std.mem.nativeToBig(u16, 1), .big);
+    std.mem.writeInt(u16, payload[6..8], 0, .big);
+    std.mem.writeInt(u16, payload[8..10], 0, .big);
+    std.mem.writeInt(u16, payload[10..12], 0, .big);
 
-    const encode_domain_buf = payload[@sizeOf(Header)..(@sizeOf(Header) + hostname.len + 2)];
+    var offset: usize = 12;
     var labels_iter = std.mem.tokenizeScalar(u8, hostname, '.');
-    var offset: usize = 0;
 
     while (labels_iter.next()) |label| {
-        encode_domain_buf[offset] = @intCast(label.len);
-
-        const off = offset + 1;
-        const new_off = off + label.len;
-        @memcpy(encode_domain_buf[off..new_off], label);
-
-        offset = new_off;
+        payload[offset] = @intCast(label.len);
+        offset += 1;
+        @memcpy(payload[offset .. offset + label.len], label);
+        offset += label.len;
     }
-    encode_domain_buf[offset] = 0;
+    payload[offset] = 0;
+    offset += 1;
 
-    const question_type_class: *QuestionTypeClass = @alignCast(@ptrCast(encode_domain_buf.ptr + encode_domain_buf.len));
-    question_type_class.* = .{
-        .type = std.mem.nativeToBig(u16, @intFromEnum(question)),
-        .class = comptime std.mem.nativeToBig(u16, 1),
-    };
+    std.mem.writeInt(u16, payload[offset .. offset + 2][0..2], std.mem.nativeToBig(u16, @intFromEnum(question)), .big);
+    std.mem.writeInt(u16, payload[offset + 2 .. offset + 4][0..2], std.mem.nativeToBig(u16, 1), .big);
+    offset += 4;
 
-    return @intFromPtr(question_type_class) + @sizeOf(QuestionTypeClass);
+    return offset;
 }
 
 fn build_queries(

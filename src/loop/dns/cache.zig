@@ -52,6 +52,7 @@ allocator: std.mem.Allocator,
 records_list: RecordLinkedList,
 
 pub fn init(self: *Cache, allocator: std.mem.Allocator) void {
+    self.allocator = allocator;
     self.records_list = RecordLinkedList.init(allocator);
 }
 

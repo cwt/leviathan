@@ -81,8 +81,19 @@ Python's `subprocess.Popen` reaps child processes in its `__del__` finalizer. If
 
 ## 🔴 Known Issues & Potential Bugs
 
-### 1. Blocking DNS in `create_server`
-`create_server` currently calls `loop_data.dns.lookup` synchronously. If the host is not in the cache, it raises a `RuntimeError` immediately instead of performing an async lookup. This breaks `create_server` for non-cached hostnames.
+### 1. Blocking DNS in `create_server` — ✅ FIXED
+
+`create_server` now uses an async state machine for DNS resolution (same pattern as `create_connection`).
+Multi-step callback chain: `try_resolve_server_host` → `server_host_resolved_callback` → `create_server_socket`.
+Future returned immediately; DNS resolution happens async. Works with `localhost` and any cached/resolvable hostname.
+
+**Bugs found & fixed (2026-05-09):**
+- **`DNS.loop` field never initialized**: `DNS.init()` didn't set `self.loop = loop`, causing garbage pointer passed to `Resolv.queue` → segfault in `prepare_data`. Fixed.
+- **`Cache.allocator` field never initialized**: `Cache.init()` didn't set `self.allocator = allocator`, causing garbage allocator used in `prepare_data` → segfault. Fixed.
+- **`packed struct` alignment panic in `build_query`**: Zig 0.15.2 `packed struct` has alignment equal to its backing integer, not 1. `@alignCast(@ptrCast(payload.ptr + offset))` panicked when offset wasn't aligned. Rewrote to use `std.mem.writeInt()` for byte-level writes. Fixed.
+- **`test_create_server_unresolvable_host` restored**: Now passes with `RuntimeError: InvalidHostname` for invalid hostnames.
+
+**Remaining:** DNS timeout for unresolvable external hostnames (e.g., `non-existent.example.com`) hangs because systemd-resolved (127.0.0.53) doesn't respond to raw UDP DNS queries. The io_uring 5-second timeout should fire but appears not to. This is a separate io_uring timeout issue, not a segfault.
 
 ### 2. Hardcoded IPv4 / Lack of DNS in Datagram
 `create_datagram_endpoint` manually splits host strings on `.` and hardcodes `AF_INET`. It lacks async DNS resolution and IPv6 support.
@@ -191,7 +202,7 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 
 | Test set | 3.13t | 3.14t |
 |----------|-------|-------|
-| Pytest full suite (155 tests) | ✅ PASS | ✅ PASS |
+| Pytest full suite (158 tests) | ✅ PASS | ✅ PASS |
 | Import, event loop, futures, tasks | ✅ | ✅ |
 | Signals, scheduling, asyncgens | ✅ | ✅ |
 | Stream transport | ✅ | ✅ |
@@ -243,4 +254,4 @@ None — all identified bugs are fixed.
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
-- **Test counts:** 155 Python tests passing on all 4 versions (3.13, 3.14, 3.13t, 3.14t) + zig tests green
+- **Test counts:** 158 Python tests passing on all 4 versions (3.13, 3.14, 3.13t, 3.14t) + zig tests green

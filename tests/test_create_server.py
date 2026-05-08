@@ -79,3 +79,47 @@ def test_create_server_get_loop() -> None:
         server.close()
 
     leviathan.run(main())
+
+
+def test_create_server_localhost() -> None:
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        server = await loop.create_server(EchoProtocol, "localhost", 0)
+        assert server.is_serving()
+        sock = server.sockets[0]
+        port = sock.getsockname()[1]
+        assert port > 0
+        server.close()
+        await server.wait_closed()
+
+    leviathan.run(main())
+
+
+def test_create_server_localhost_echo() -> None:
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        server = await loop.create_server(EchoProtocol, "localhost", 0)
+        sock = server.sockets[0]
+        port = sock.getsockname()[1]
+
+        reader, writer = await asyncio.open_connection("localhost", port)
+        writer.write(b"hello from localhost")
+        await writer.drain()
+        data = await reader.read(100)
+        assert data == b"hello from localhost"
+        writer.close()
+        await writer.wait_closed()
+
+        server.close()
+        await server.wait_closed()
+
+    leviathan.run(main())
+
+
+def test_create_server_unresolvable_host() -> None:
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        with pytest.raises(RuntimeError):
+            await loop.create_server(EchoProtocol, "invalid--domain", 0)
+
+    leviathan.run(main())

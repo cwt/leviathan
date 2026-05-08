@@ -27,6 +27,7 @@ parsed_hostname_buf: [255]u8,
 ipv6_supported: bool,
 
 pub fn init(self: *DNS, loop: *Loop) !void {
+    self.loop = loop;
     self.arena = std.heap.ArenaAllocator.init(loop.allocator);
     self.allocator = self.arena.allocator();
 
