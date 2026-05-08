@@ -268,8 +268,6 @@ pub fn stream_dealloc(self: ?*StreamTransportObject) callconv(.c) void {
 
     const @"type" = python_c.get_type(@ptrCast(instance));
     @"type".tp_free.?(@ptrCast(instance));
-
-    python_c.py_decref(@ptrCast(instance));
 }
 
 
