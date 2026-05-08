@@ -29,12 +29,70 @@ Project now targets Zig 0.15.2 (was 0.14.0). Docs cached at `docs/zig-0.15.2/`.
 ### 2.1 — `create_connection` — ✅ DONE
 
 Full async DNS→socket→connect→transport pipeline with happy eyeballs multi-address support.
-6 tests pass (basic, send/recv, close, refused, multi-msg, extra_info). 5 skipped (edge case bugs).
+11 tests pass (basic, send/recv, close, refused, multi-msg, extra_info, missing_args, invalid_factory, lambda, write_eof, is_closing).
 
 **Bugs found & fixed:**
-- **Wrong callback dispatch**: `z_loop_create_connection` dispatched `create_socket_connection` with `*SocketCreationData` instead of `*SocketConnectionData` → segfault. Fixed by dispatching `try_resolv_host`.
-- **Use-after-free on `protocol_factory`**: `defer` decref'd before heap copy borrowed the pointer. Fixed with `py_newref` before `creation_data_ptr.* = creation_data`.
-- **Protocol factory passed to `new_stream_transport`** instead of protocol instance → `TypeError: Invalid protocol`. Fixed by calling factory first, passing instance.
+- **Double-decref on `protocol_factory`**: Borrowed reference from `args` was decref'd in `defer` block → segfault in error path. Fixed.
+- **`undefined` field cleanup segfault**: `SocketCreationData` fields were `undefined` before initialization, but `errdefer` called `deinitialize_object_fields` which touched them. Fixed by making fields optional/null.
+- **Memory leak in result tuples**: `PyTuple_New` result was incref'd by `future_fast_set_result` but never released. Added `defer py_decref(result_tuple)`.
+- **Double-close on connected socket**: `defer` in connect callback closed `fd` even on success. Fixed with `fd_created` toggle.
+- **Filename typo**: Renamed `create_connnection.zig` to `create_connection.zig`.
+- **`is_closing` always False**: `transport_close` didn't set the `closed` flag. Fixed.
+- **Intermittent hang in free-threading**: Race condition in `poll_blocking_events` where the loop could block even if callbacks were queued by other threads. Fixed by checking `ready_queue.empty()` before blocking.
+- **`Abort` crashes on signals**: `io_uring` operations (submit/poll) were interrupted by signals (EINTR), causing Zig panics or inconsistent returns to Python. Fixed by implementing silent retries on `SignalInterrupt` and removing all remaining `@panic`/`unreachable` calls in the core IO path.
+- **GC instability in Subprocess**: `SubprocessTransport` was crashing during GC cycles. Switched to stable manual reference counting and fixed struct initialization to prevent clobbering the Python object head.
+
+---
+
+## 🧠 Lessons Learned: The Journey to 100% Stability
+
+### 1. Free-Threading & The "Atomic Sleep"
+In standard Python, the GIL hides many race conditions. In free-threading (3.13t/3.14t), the window between "checking for work" and "going to sleep" is a deadly trap.
+*   **The Bug:** The loop checks the queue, sees it empty, then blocks in `io_uring`. A background thread adds a task *after* the check but *before* the block.
+*   **The Lesson:** The decision to sleep must be **atomic**. Always check the ready queue while holding the loop mutex immediately before dropping the GIL and calling into the kernel.
+
+### 2. Signal Resilience (EINTR is a Constant)
+Signals (like `SIGCHLD` from subprocesses) can "stab" the process at any time, causing system calls to return `EINTR`.
+*   **The Bug:** `io_uring_submit` or `io_uring_wait` returns `SignalInterrupt`. If not handled, this propagates as a Zig panic or an unexpected Python exception, often leading to a process `Abort`.
+*   **The Lesson:** Every kernel-level interaction (`submit`, `wait`, `waitpid`) **must** be wrapped in a retry loop or a silent ignore for `SignalInterrupt`. The event loop should never exit due to a signal.
+
+### 3. Python Object Integrity
+Zig's `self.* = .{ ... }` syntax is dangerous for Python objects allocated via `tp_alloc`.
+*   **The Bug:** Overwriting the whole struct clobbers the `ob_base` (refcounts, type pointers, GC headers), causing immediate or deferred crashes.
+*   **The Lesson:** Never use struct-level assignment on objects that inherit from `PyObject`. Always initialize individual fields.
+
+### 4. The GC Trap
+Adding `Py_TPFLAGS_HAVE_GC` without a perfectly stable `tp_traverse` and `tp_clear` is a recipe for intermittent segfaults.
+*   **The Lesson:** Start with manual reference counting (`tp_dealloc` only). Only move to GC tracking once the object lifecycle is fully understood and verified under heavy stress.
+
+---
+
+## 🏗 Architectural Mandates (Rules for the Future)
+
+1.  **NO PANICS in the IO Path:** Use `handle_zig_function_error` to convert Zig errors to Python exceptions. Never use `@panic` or `unreachable` in code that runs during the normal loop cycle.
+2.  **EINTR Safety:** All `io_uring` submissions must use `IO.submit_guaranteed()`.
+3.  **Thread-Safe Dispatches:** Any function that can be called from a background thread (like `call_soon_threadsafe`) must trigger the `eventfd` wakeup *only if* the loop is actually blocked.
+4.  **Null Discovery:** In free-threading, GC can null out fields concurrently. Always use `?PyObject` and handle `null` gracefully in callbacks.
+
+## 🔴 Known Issues & Potential Bugs
+
+### 1. Blocking DNS in `create_server`
+`create_server` currently calls `loop_data.dns.lookup` synchronously. If the host is not in the cache, it raises a `RuntimeError` immediately instead of performing an async lookup. This breaks `create_server` for non-cached hostnames.
+
+### 2. Hardcoded IPv4 / Lack of DNS in Datagram
+`create_datagram_endpoint` manually splits host strings on `.` and hardcodes `AF_INET`. It lacks async DNS resolution and IPv6 support.
+
+### 3. Unix Connection Hangs
+`test_create_unix_connection_invalid_path` is skipped because non-blocking `AF_UNIX` connect needs proper `io_uring` `SocketConnect` handling to catch connection errors without hanging.
+
+---
+
+## 🚀 Recommended Next Steps
+
+1.  **Refactor `create_server` DNS**: Implement an async state machine for `create_server` resolution, similar to `create_connection`.
+2.  **Universal Sockaddr Handling**: Abstract IPv4/IPv6/Unix address handling into a unified utility to remove hardcoded `AF_INET` dependencies.
+3.  **Implement `getnameinfo`**: Complete the DNS suite by adding `loop.getnameinfo`.
+4.  **Inotify / Child Watchers**: Proceed with Priority 3 tasks (3.5, 3.6) now that the core transport layer is stable.
 
 ### 2.2 — TCP Server (`create_server`) — ✅ DONE
 
@@ -127,7 +185,7 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 
 | Test set | 3.13t | 3.14t |
 |----------|-------|-------|
-| Pytest full suite (150 tests) | ✅ PASS | ✅ PASS |
+| Pytest full suite (155 tests) | ✅ PASS | ✅ PASS |
 | Import, event loop, futures, tasks | ✅ | ✅ |
 | Signals, scheduling, asyncgens | ✅ | ✅ |
 | Stream transport | ✅ | ✅ |

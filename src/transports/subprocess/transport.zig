@@ -13,33 +13,18 @@ pub const SubprocessTransportObject = extern struct {
     protocol: ?PyObject,
     pid: std.posix.pid_t,
     returncode: ?PyObject,
+
     pidfd_task_id: usize,
     closed: bool,
 };
 
 fn subprocess_dealloc(self: ?*SubprocessTransportObject) callconv(.c) void {
     const instance = self.?;
-    python_c.PyObject_GC_UnTrack(@ptrCast(instance));
     python_c.py_xdecref(instance.loop);
     python_c.py_xdecref(instance.protocol);
     python_c.py_xdecref(instance.returncode);
     const @"type": *python_c.PyTypeObject = python_c.get_type(@ptrCast(instance));
     @"type".tp_free.?(@ptrCast(instance));
-}
-
-fn subprocess_traverse(self: ?*SubprocessTransportObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
-    return python_c.py_visit(self.?, visit, arg);
-}
-
-fn subprocess_clear(self: ?*SubprocessTransportObject) callconv(.c) c_int {
-    const instance = self.?;
-    python_c.py_xdecref(instance.loop);
-    python_c.py_xdecref(instance.protocol);
-    python_c.py_xdecref(instance.returncode);
-    instance.loop = null;
-    instance.protocol = null;
-    instance.returncode = null;
-    return 0;
 }
 
 fn subprocess_get_pid(self: ?*SubprocessTransportObject, _: ?PyObject) callconv(.c) ?PyObject {
@@ -52,18 +37,27 @@ fn subprocess_get_returncode(self: ?*SubprocessTransportObject, _: ?PyObject) ca
 }
 
 fn subprocess_kill(self: ?*SubprocessTransportObject, _: ?PyObject) callconv(.c) ?PyObject {
-    _ = std.posix.kill(self.?.pid, std.os.linux.SIG.KILL) catch {};
+    const instance = self.?;
+    std.posix.kill(instance.pid, std.posix.SIG.KILL) catch |err| {
+        return utils.handle_zig_function_error(err, null);
+    };
     return python_c.get_py_none();
 }
 
 fn subprocess_terminate(self: ?*SubprocessTransportObject, _: ?PyObject) callconv(.c) ?PyObject {
-    _ = std.posix.kill(self.?.pid, std.os.linux.SIG.TERM) catch {};
+    const instance = self.?;
+    std.posix.kill(instance.pid, std.posix.SIG.TERM) catch |err| {
+        return utils.handle_zig_function_error(err, null);
+    };
     return python_c.get_py_none();
 }
 
-fn subprocess_send_signal(self: ?*SubprocessTransportObject, args: ?PyObject) callconv(.c) ?PyObject {
-    const sig: c_int = @intCast(python_c.PyLong_AsInt(args.?));
-    _ = std.posix.kill(self.?.pid, @intCast(sig)) catch {};
+fn subprocess_send_signal(self: ?*SubprocessTransportObject, arg: ?PyObject) callconv(.c) ?PyObject {
+    const instance = self.?;
+    const sig = python_c.PyLong_AsInt(arg.?) ;
+    std.posix.kill(instance.pid, @intCast(sig)) catch |err| {
+        return utils.handle_zig_function_error(err, null);
+    };
     return python_c.get_py_none();
 }
 
@@ -88,9 +82,7 @@ const SubprocessMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
 const SubprocessSlots: []const python_c.PyType_Slot = &[_]python_c.PyType_Slot{
     .{ .slot = python_c.Py_tp_new, .pfunc = @ptrCast(@constCast(&python_c.PyType_GenericNew)) },
     .{ .slot = python_c.Py_tp_dealloc, .pfunc = @ptrCast(@constCast(&subprocess_dealloc)) },
-    .{ .slot = python_c.Py_tp_traverse, .pfunc = @ptrCast(@constCast(&subprocess_traverse)) },
-    .{ .slot = python_c.Py_tp_clear, .pfunc = @ptrCast(@constCast(&subprocess_clear)) },
-    .{ .slot = python_c.Py_tp_methods, .pfunc = @constCast(SubprocessMethods.ptr) },
+    .{ .slot = python_c.Py_tp_methods, .pfunc = @ptrCast(@constCast(SubprocessMethods.ptr)) },
     .{ .slot = python_c.Py_tp_doc, .pfunc = @constCast("Leviathan SubprocessTransport.") },
     .{ .slot = 0, .pfunc = null },
 };
@@ -114,12 +106,16 @@ pub fn create_type() !void {
 
 fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
     const transport: *SubprocessTransportObject = @alignCast(@ptrCast(data.user_data.?));
+    defer python_c.py_decref(@ptrCast(transport));
+
     if (data.cancelled or transport.closed) return;
 
     const result = std.posix.waitpid(transport.pid, std.posix.W.NOHANG);
     if (result.pid != transport.pid) {
         // Still running — re-arm the timer
-        const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(transport.loop.?)));
+        const py_loop = transport.loop orelse return;
+        const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(py_loop)));
+        python_c.py_incref(@ptrCast(transport));
         _ = try loop_data.io.queue(.{
             .WaitTimer = .{
                 .duration = .{ .sec = 0, .nsec = 100_000_000 },
@@ -146,12 +142,12 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
 
     // Notify protocol
     if (transport.protocol) |proto| {
-        const pe = python_c.PyObject_GetAttrString(proto, "process_exited") orelse return error.PythonError;
+        const pe = python_c.PyObject_GetAttrString(proto, "process_exited\x00") orelse return error.PythonError;
         defer python_c.py_decref(pe);
-        const r1 = python_c.PyObject_CallNoArgs(pe) orelse return error.PythonError;
-        python_c.py_decref(r1);
+        const r1 = python_c.PyObject_CallNoArgs(pe);
+        if (r1) |v| python_c.py_decref(v) else python_c.PyErr_Clear();
 
-        const cl = python_c.PyObject_GetAttrString(proto, "connection_lost") orelse return error.PythonError;
+        const cl = python_c.PyObject_GetAttrString(proto, "connection_lost\x00") orelse return error.PythonError;
         defer python_c.py_decref(cl);
         const r2 = python_c.PyObject_CallOneArg(cl, python_c.get_py_none_without_incref()) orelse return error.PythonError;
         python_c.py_decref(r2);
@@ -161,6 +157,7 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
 pub fn start_exit_watcher(transport: *SubprocessTransportObject, loop: *LoopObject) !void {
     const loop_data = utils.get_data_ptr(Loop, loop);
 
+    python_c.py_incref(@ptrCast(transport));
     transport.pidfd_task_id = try loop_data.io.queue(.{
         .WaitTimer = .{
             .duration = .{ .sec = 0, .nsec = 100_000_000 },
@@ -180,16 +177,12 @@ pub fn new_with_pid(
     const self: *SubprocessTransportObject = @ptrCast(
         SubprocessType.?.tp_alloc.?(SubprocessType.?, 0) orelse return error.PythonError
     );
-    // Keep ob_base from tp_alloc — it sets ob_refcnt and ob_type
-    const saved_base = self.ob_base;
-    self.* = .{
-        .ob_base = saved_base,
-        .loop = python_c.py_newref(@as(*python_c.PyObject, @ptrCast(loop))),
-        .protocol = python_c.py_newref(protocol),
-        .pid = pid,
-        .returncode = null,
-        .pidfd_task_id = 0,
-        .closed = false,
-    };
+    self.loop = python_c.py_newref(@as(*python_c.PyObject, @ptrCast(loop)));
+    self.protocol = python_c.py_newref(protocol);
+    self.pid = pid;
+    self.returncode = null;
+    self.pidfd_task_id = 0;
+    self.closed = false;
+
     return self;
 }

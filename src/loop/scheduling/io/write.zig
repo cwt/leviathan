@@ -36,7 +36,7 @@ pub fn wait_ready(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: 
         expected_submission += 1;
     }
 
-    const ret = try ring.submit();
+    const ret = try IO.submit_guaranteed(ring);
     if (ret != expected_submission) {
         return error.SQENotSubmitted;
     }
@@ -73,7 +73,7 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
         expected_submission += 1;
     }
 
-    const ret = try ring.submit();
+    const ret = try IO.submit_guaranteed(ring);
     if (ret != expected_submission) {
         return error.SQENotSubmitted;
     }
@@ -104,7 +104,7 @@ pub fn perform_with_iovecs(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSe
         expected_submission += 1;
     }
 
-    const ret = try ring.submit();
+    const ret = try IO.submit_guaranteed(ring);
     if (ret != expected_submission) {
         return error.SQENotSubmitted;
     }

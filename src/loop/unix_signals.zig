@@ -171,7 +171,7 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
 
     try self.loop.reserve_slots(1);
     if (!self.callbacks.insert(sig, callback)) {
-        @panic("Failed to insert callback");
+        return error.OutOfMemory;
     }
 }
 
@@ -216,9 +216,7 @@ pub fn deinit(self: *UnixSignals) void {
     }
 
     std.posix.sigprocmask(std.os.linux.SIG.UNBLOCK, &mask, null);
-    self.callbacks.deinit() catch |err| {
-        std.debug.panic("Unexpected error while releasing Callbacks Btree: {s}", .{@errorName(err)});
-    };
+    self.callbacks.deinit() catch {};
 }
 
 const UnixSignals = @This();

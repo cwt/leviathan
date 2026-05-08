@@ -44,7 +44,7 @@ pub fn wait(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: WaitDa
         sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
-    const ret = try ring.submit();
+    const ret = try IO.submit_guaranteed(ring);
     if (ret != 1) {
         return error.SQENotSubmitted;
     }

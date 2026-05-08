@@ -123,6 +123,7 @@ inline fn z_loop_create_datagram_endpoint(
 
     const future_data = utils.get_data_ptr(Future, fut);
     Future.Python.Result.future_fast_set_result(future_data, result_tuple);
+    python_c.py_decref(result_tuple);
     return fut;
 }
 

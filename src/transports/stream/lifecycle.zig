@@ -67,6 +67,8 @@ pub fn transport_close(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
         return utils.handle_zig_function_error(err, null);
     };
 
+    instance.closed = true;
+
     const fd = instance.fd;
     if (fd >= 0) {
         _ = std.os.linux.close(fd);

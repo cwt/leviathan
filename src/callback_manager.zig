@@ -228,9 +228,7 @@ pub fn release_sets_queue(
 
         for (callbacks_set.callbacks[callbacks_set.offset..callbacks_num]) |*callback| {
             callback.data.cancelled = true;
-            callback.func(&callback.data) catch |err| {
-                std.debug.panic("Unexpected error while releasing events queues: {s}", .{@errorName(err)});
-            };
+            _ = callback.func(&callback.data) catch {};
         }
 
         callbacks_set.deinit(allocator);

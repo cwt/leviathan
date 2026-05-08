@@ -37,6 +37,7 @@ fn getaddrinfo_callback(data: *const CallbackManager.CallbackData) !void {
     const py_tuple = try build_result_tuple(address_list, gaid.port);
     const future_data2 = utils.get_data_ptr(Future, gaid.future);
     Future.Python.Result.future_fast_set_result(future_data2, py_tuple);
+    python_c.py_decref(py_tuple);
 }
 
 fn build_result_tuple(address_list: []const std.net.Address, port: u16) !PyObject {
@@ -124,6 +125,7 @@ inline fn z_loop_getaddrinfo(self: *LoopObject, args: []?PyObject, knames: ?PyOb
     const py_tuple = try build_result_tuple(address_list, port);
     const future_data = utils.get_data_ptr(Future, fut);
     Future.Python.Result.future_fast_set_result(future_data, py_tuple);
+    python_c.py_decref(py_tuple);
     return fut;
 }
 

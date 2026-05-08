@@ -139,17 +139,39 @@ def test_create_connection_refused() -> None:
 
 
 def test_create_connection_missing_args() -> None:
-    pytest.skip("segfault — error path from create_connection(None) needs investigation")
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        with pytest.raises(TypeError):
+            await loop.create_connection() # type: ignore
+
+    leviathan.run(main())
 
 
 def test_create_connection_invalid_protocol_factory() -> None:
-    pytest.skip("segfault — error path from create_connection(str) needs investigation")
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        with pytest.raises(ValueError, match="Invalid protocol_factory"):
+            await loop.create_connection("not a callable", "127.0.0.1", 12345) # type: ignore
+
+    leviathan.run(main())
 
 
 import pytest
 
 def test_create_connection_lambda_factory() -> None:
-    pytest.skip("segfault — transport_close/is_closing method pointer bug")
+    host, port, stop = _start_echo_server()
+    try:
+        async def main() -> None:
+            loop = asyncio.get_running_loop()
+            transport, protocol = await loop.create_connection(
+                lambda: EchoProtocol(), host, port
+            )
+            assert isinstance(protocol, EchoProtocol)
+            transport.close()
+
+        leviathan.run(main())
+    finally:
+        stop.set()
 
 
 def test_create_connection_multiple_messages() -> None:
@@ -195,8 +217,34 @@ def test_create_connection_extra_info() -> None:
 
 
 def test_create_connection_write_eof() -> None:
-    pytest.skip("hangs — write_eof edge case needs investigation")
+    host, port, stop = _start_echo_server()
+    try:
+        async def main() -> None:
+            loop = asyncio.get_running_loop()
+            transport, _ = await loop.create_connection(
+                EchoProtocol, host, port
+            )
+            assert transport.can_write_eof()
+            transport.write_eof()
+            transport.close()
+
+        leviathan.run(main())
+    finally:
+        stop.set()
 
 
 def test_create_connection_is_closing() -> None:
-    pytest.skip("is_closing method pointer bug — calls transport_close instead")
+    host, port, stop = _start_echo_server()
+    try:
+        async def main() -> None:
+            loop = asyncio.get_running_loop()
+            transport, _ = await loop.create_connection(
+                EchoProtocol, host, port
+            )
+            assert not transport.is_closing()
+            transport.close()
+            assert transport.is_closing()
+
+        leviathan.run(main())
+    finally:
+        stop.set()

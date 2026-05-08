@@ -24,7 +24,7 @@ pub fn connect(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Con
     );
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    const ret = try ring.submit();
+    const ret = try IO.submit_guaranteed(ring);
     if (ret != 1) {
         return error.SQENotSubmitted;
     }
@@ -38,7 +38,7 @@ pub fn shutdown(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Sh
     const sqe = try ring.shutdown(@intCast(@intFromPtr(data_ptr)), data.socket_fd, data.how);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    const ret = try ring.submit();
+    const ret = try IO.submit_guaranteed(ring);
     if (ret != 1) {
         return error.SQENotSubmitted;
     }

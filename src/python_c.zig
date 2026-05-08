@@ -61,6 +61,7 @@ pub const PyErr_SetString = _c.PyErr_SetString;
 pub const PyErr_SetNone = _c.PyErr_SetNone;
 pub const PyErr_SetObject = _c.PyErr_SetObject;
 pub const PyErr_Occurred = _c.PyErr_Occurred;
+pub const PyErr_Clear = _c.PyErr_Clear;
 pub const PyErr_GetRaisedException = _c.PyErr_GetRaisedException;
 pub const PyErr_SetRaisedException = _c.PyErr_SetRaisedException;
 pub const PyErr_GivenExceptionMatches = _c.PyErr_GivenExceptionMatches;
@@ -125,6 +126,7 @@ pub const PyObject_Repr = _c.PyObject_Repr;
 pub const PyObject_Str = _c.PyObject_Str;
 pub const PyObject_ClearWeakRefs = _c.PyObject_ClearWeakRefs;
 pub const PyObject_GC_UnTrack = _c.PyObject_GC_UnTrack;
+pub const PyObject_GC_Track = _c.PyObject_GC_Track;
 
 pub const PyDict_New = _c.PyDict_New;
 pub const PyDict_SetItemString = _c.PyDict_SetItemString;

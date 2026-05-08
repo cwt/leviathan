@@ -49,7 +49,6 @@ inline fn z_loop_create_server(
     );
     defer {
         python_c.py_xdecref(py_sock);
-        python_c.py_xdecref(protocol_factory);
     }
 
     if (python_c.PyCallable_Check(protocol_factory) <= 0) {
@@ -153,6 +152,7 @@ inline fn z_loop_create_server(
     // Set future result — return the server object
     const future_data = utils.get_data_ptr(Future, fut);
     Future.Python.Result.future_fast_set_result(future_data, server);
+    python_c.py_decref(server);
     return fut;
 }
 

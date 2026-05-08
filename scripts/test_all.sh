@@ -64,8 +64,7 @@ run_tests() {
         cmd="$py"
     fi
     if PYTHONPATH=. $cmd -m pytest tests/ \
-        --ignore=tests/test_create_connection.py \
-        -q 2>/dev/null; then
+        -q; then
         printf "${GREEN}[%s] PASS${NC}\n" "$label"
         PASS=$((PASS + 1))
         return 0

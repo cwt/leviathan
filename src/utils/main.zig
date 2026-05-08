@@ -72,8 +72,14 @@ pub inline fn handle_zig_function_error(@"error": anyerror, return_value: anytyp
     switch (@"error") {
         error.PythonError => {},
         error.OutOfMemory => python_c.raise_python_error(python_c.PyExc_MemoryError.?, null),
+        error.SignalInterrupt => {
+            // Silently raise this as a RuntimeError. It should be caught by the loop retry logic
+            // but if it escapes to Python, we don't want to crash.
+            python_c.raise_python_runtime_error(@errorName(@"error"));
+        },
         else => {
-            std.debug.dumpCurrentStackTrace(@returnAddress());
+            // In release/production we might want to be more quiet, but for now
+            // let's just raise the exception without the messy/crashing stack dump.
             python_c.raise_python_runtime_error(@errorName(@"error"));
         }
     }

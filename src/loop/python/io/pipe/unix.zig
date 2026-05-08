@@ -82,6 +82,7 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
 
     const future_data = utils.get_data_ptr(Future, ucd.future);
     Future.Python.Result.future_fast_set_result(future_data, result_tuple);
+    python_c.py_decref(result_tuple);
 }
 
 fn create_unix_sockaddr(path: []const u8, alloc: std.mem.Allocator) ![]u8 {
@@ -171,6 +172,7 @@ inline fn z_loop_create_unix_server(
     const fut = try Future.Python.Constructors.fast_new_future(self);
 
     const path = try get_string(py_path, alloc);
+    defer alloc.free(path);
 
     const backlog: c_int = if (py_backlog) |b| @intCast(python_c.PyLong_AsInt(b)) else 100;
 
@@ -208,7 +210,7 @@ inline fn z_loop_create_unix_server(
 
     const future_data = utils.get_data_ptr(Future, fut);
     Future.Python.Result.future_fast_set_result(future_data, server);
-    alloc.free(path);
+    python_c.py_decref(server);
     return fut;
 }
 

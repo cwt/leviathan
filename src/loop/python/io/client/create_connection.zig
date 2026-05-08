@@ -29,12 +29,12 @@ const SocketCreationData = struct {
     py_interleave: ?PyObject = null,
     py_all_errors: ?PyObject = null,
 
-    protocol_factory: PyObject = undefined,
-    future: *FutureObject = undefined,
-    loop: *LoopObject = undefined,
+    protocol_factory: ?PyObject = null,
+    future: ?*FutureObject = null,
+    loop: ?*LoopObject = null,
 
     pub fn deinit(self: *SocketCreationData) void {
-        const loop_data = utils.get_data_ptr(Loop, self.loop);
+        const loop_data = utils.get_data_ptr(Loop, self.loop.?);
         const allocator = loop_data.allocator;
 
         python_c.deinitialize_object_fields(self, &.{});
@@ -115,7 +115,6 @@ inline fn z_loop_create_connection(
     );
     defer {
         python_c.py_xdecref(py_sock);
-        python_c.py_xdecref(protocol_factory);
     }
     errdefer python_c.deinitialize_object_fields(&creation_data, &.{"future", "protocol_factory"});
 
@@ -224,7 +223,7 @@ const SocketConnectionData = struct {
     method: SocketConnectionMethod,
 
     pub fn deinit(self: *SocketConnectionData) void {
-        const loop_data = utils.get_data_ptr(Loop, self.creation_data.loop);
+        const loop_data = utils.get_data_ptr(Loop, self.creation_data.loop.?);
         const allocator = loop_data.allocator;
 
         self.creation_data.deinit();
@@ -262,7 +261,7 @@ fn get_host_slice(data: *SocketCreationData) ![]const u8 {
 fn z_try_resolv_host(creation_data: *SocketCreationData) !void {
     const hostname = try get_host_slice(creation_data);
 
-    const loop_data = utils.get_data_ptr(Loop, creation_data.loop);
+    const loop_data = utils.get_data_ptr(Loop, creation_data.loop.?);
     const allocator = loop_data.allocator;
 
     const connection_data = try allocator.create(SocketConnectionData);
@@ -301,11 +300,11 @@ fn try_resolv_host(data: *const CallbackManager.CallbackData) !void {
 
     if (data.cancelled) {
         python_c.raise_python_runtime_error("Event for trying host resolution cancelled");
-        return set_future_exception(error.PythonError, socket_creation_data_ptr.future);
+        return set_future_exception(error.PythonError, socket_creation_data_ptr.future.?);
     }
 
     z_try_resolv_host(socket_creation_data_ptr) catch |err| {
-        return set_future_exception(err, socket_creation_data_ptr.future);
+        return set_future_exception(err, socket_creation_data_ptr.future.?);
     };
 }
 
@@ -314,13 +313,13 @@ fn try_resolv_host(data: *const CallbackManager.CallbackData) !void {
 
 fn z_host_resolved_callback(connection_data: *SocketConnectionData) !void {
     const creation_data = connection_data.creation_data;
-    const loop_data = utils.get_data_ptr(Loop, creation_data.loop);
+    const loop_data = utils.get_data_ptr(Loop, creation_data.loop.?);
     const allocator = loop_data.allocator;
 
     const host = try get_host_slice(creation_data);
     const address_list = try loop_data.dns.lookup(host, null) orelse {
         python_c.raise_python_runtime_error("Failed to resolve host");
-        return set_future_exception(error.PythonError, creation_data.future);
+        return set_future_exception(error.PythonError, creation_data.future.?);
     };
 
     connection_data.address_list = try allocator.dupe(std.net.Address, address_list);
@@ -341,11 +340,11 @@ fn host_resolved_callback(data: *const CallbackManager.CallbackData) !void {
 
     if (data.cancelled) {
         python_c.raise_python_runtime_error("Host resolution failed");
-        return set_future_exception(error.PythonError, connection_data.creation_data.future);
+        return set_future_exception(error.PythonError, connection_data.creation_data.future.?);
     }
 
     z_host_resolved_callback(connection_data) catch |err| {
-        return set_future_exception(err, connection_data.creation_data.future);
+        return set_future_exception(err, connection_data.creation_data.future.?);
     };
 }
 
@@ -416,11 +415,12 @@ const MultiConnectState = struct {
     }
 
     pub fn deinit(self: *MultiConnectState) void {
-        const allocator = self.connection_data.creation_data.loop;
-        const loop_data = utils.get_data_ptr(Loop, allocator);
-        const gpa = loop_data.allocator;
-        self.task_ids.deinit(gpa);
-        gpa.destroy(self);
+        const loop = self.connection_data.creation_data.loop.?;
+        const loop_data = utils.get_data_ptr(Loop, loop);
+        const allocator = loop_data.allocator;
+
+        self.task_ids.deinit(allocator);
+        allocator.destroy(self);
     }
 };
 
@@ -476,14 +476,14 @@ fn schedule_remaining_connects_callback(data: *const CallbackManager.CallbackDat
 
     const connection_data = mcs.connection_data;
     const creation_data = connection_data.creation_data;
-    const loop = creation_data.loop;
+    const loop = creation_data.loop.?;
     const loop_data = utils.get_data_ptr(Loop, loop);
     const allocator = loop_data.allocator;
 
     const address_list = connection_data.address_list.?;
     for (address_list[1..]) |*addr| {
         submit_connect_for_address(mcs, addr, allocator, loop_data) catch |err| {
-            return set_future_exception(err, creation_data.future);
+            return set_future_exception(err, creation_data.future.?);
         };
     }
 }
@@ -506,7 +506,7 @@ fn z_create_socket_connection(data: *SocketConnectionData, connection_submitted:
         break :blk @intCast(value);
     };
 
-    const loop = creation_data.loop;
+    const loop = creation_data.loop.?;
     const loop_data = utils.get_data_ptr(Loop, loop);
     const allocator = loop_data.allocator;
 
@@ -539,7 +539,7 @@ fn z_create_socket_connection(data: *SocketConnectionData, connection_submitted:
 
     if (address_list.len == 0) {
         python_c.raise_python_runtime_error("No addresses resolved");
-        return set_future_exception(error.PythonError, creation_data.future);
+        return set_future_exception(error.PythonError, creation_data.future.?);
     }
 
     const port: u16 = blk: {
@@ -602,11 +602,11 @@ fn create_socket_connection(data: *const CallbackManager.CallbackData) !void {
 
     if (data.cancelled) {
         python_c.raise_python_runtime_error("Event for socket creation cancelled");
-        return set_future_exception(error.PythonError, socket_creation_data.creation_data.future);
+        return set_future_exception(error.PythonError, socket_creation_data.creation_data.future.?);
     }
 
     z_create_socket_connection(socket_creation_data, &connections_submitted) catch |err| {
-        return set_future_exception(err, socket_creation_data.creation_data.future);
+        return set_future_exception(err, socket_creation_data.creation_data.future.?);
     };
 }
 
@@ -624,7 +624,7 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
     const fd = socket_data.socket_fd;
 
     const creation_data = mcs.connection_data.creation_data;
-    const loop = creation_data.loop;
+    const loop = creation_data.loop.?;
     const loop_data = utils.get_data_ptr(Loop, loop);
     const allocator = loop_data.allocator;
     allocator.destroy(socket_data);
@@ -645,7 +645,7 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
         if (fd >= 0) std.posix.close(fd);
 
         if (mcs.pending == 0) {
-            const future = creation_data.future;
+            const future = creation_data.future.?;
             const future_data = utils.get_data_ptr(Future, future);
 
             if (mcs.all_errors) {
@@ -680,16 +680,21 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
     }
 
     var transport_creation_data = TransportCreationData{
-        .protocol_factory = creation_data.protocol_factory,
-        .future = creation_data.future,
-        .loop = creation_data.loop,
+        .protocol_factory = creation_data.protocol_factory.?,
+        .future = creation_data.future.?,
+        .loop = creation_data.loop.?,
         .socket_fd = fd,
         .zero_copying = false,
         .fd_created = true,
     };
+    defer {
+        if (transport_creation_data.fd_created) {
+            std.posix.close(@intCast(transport_creation_data.socket_fd));
+        }
+    }
 
     z_create_transport_and_set_future_result(&transport_creation_data) catch |err| {
-        return set_future_exception(err, creation_data.future);
+        return set_future_exception(err, creation_data.future.?);
     };
     transport_creation_data.fd_created = false;
     return;
@@ -727,7 +732,7 @@ fn z_create_transport_and_set_future_result(data: *const TransportCreationData) 
     defer python_c.py_decref(ret);
 
     const result_tuple = python_c.PyTuple_New(2) orelse return error.PythonError;
-    errdefer python_c.py_decref(result_tuple);
+    defer python_c.py_decref(result_tuple);
 
     if (python_c.PyTuple_SetItem(result_tuple, 0, @ptrCast(transport)) != 0) {
         return error.PythonError;

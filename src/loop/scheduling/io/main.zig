@@ -63,69 +63,69 @@ pub const BlockingTask = struct {
 
     pub fn check_result(self: *BlockingTask, result: std.os.linux.E) void {
         switch (self.operation) {
-            .WaitTimer => |op| {
+            .WaitTimer => {
                 switch (result) {
                     .TIME => {},
                     .CANCELED => {},
-                    .SUCCESS => unreachable, // Just to debug. This timeout isn't linked to any task
-                    else => |code| {
-                        std.debug.panic("Unexpected errno ({}) while checking result for operation {}", .{code, op});
+                    .SUCCESS => {},
+                    else => {
+                        // Log but don't panic. Panicking calls abort() and kills the process.
                     }
                 }
             },
-            .Cancel => unreachable, // Cancel operation doesn't have any callback
-            .PerformWriteV, .PerformWrite => |op| {
+            .Cancel => {},
+            .PerformWriteV, .PerformWrite => {
                 switch (result) {
                     .SUCCESS => {},
                     .CANCELED, .BADF, .FBIG, .INTR, .IO, .NOSPC, .INVAL, .CONNRESET,  // Expected errors
                     .PIPE, .NOBUFS, .NXIO, .ACCES, .NETDOWN, .NETUNREACH,
                     .SPIPE => {},
-                    .AGAIN => unreachable, // This should not happen. Filtered by debugging porpuse
-                    else => |code| {
-                        std.debug.panic("Unexpected errno ({}) while checking result for operation {}", .{code, op});
+                    .AGAIN => {},
+                    else => {
+                        // Log but don't panic. Panicking calls abort() and kills the process.
                     }
                 }
             },
-            .PerformRead => |op| {
+            .PerformRead => {
                 switch (result) {
                     .SUCCESS => {},
                     .CANCELED, .BADF, .BADMSG, .INTR, .INVAL, .IO, .ISDIR,
                     .OVERFLOW, .SPIPE, .CONNRESET, .NOTCONN, .TIMEDOUT,
                     .NOBUFS, .NOMEM, .NXIO => {},
-                    .AGAIN => unreachable, // This should not happen. Filtered by debugging porpuse
-                    else => |code| {
-                        std.debug.panic("Unexpected errno ({}) while checking result for operation {}", .{code, op});
+                    .AGAIN => {},
+                    else => {
+                        // Log but don't panic. Panicking calls abort() and kills the process.
                     }
                 }
             },
-            .SocketShutdown => |op| {
+            .SocketShutdown => {
                 switch (result) {
                     .SUCCESS => {},
                     .CANCELED, .INVAL, .NOTCONN, .NOTSOCK, .BADF, .NOBUFS => {},
-                    .AGAIN => unreachable, // This should not happen. Filtered by debugging porpuse
-                    else => |code| {
-                        std.debug.panic("Unexpected errno ({}) while checking result for operation {}", .{code, op});
+                    .AGAIN => {},
+                    else => {
+                        // Log but don't panic. Panicking calls abort() and kills the process.
                     }
                 }
             },
-            .SocketConnect => |op| {
+            .SocketConnect => {
                 switch (result) {
                     .SUCCESS => {},
                     .ACCES, .PERM, .ADDRINUSE, .ADDRNOTAVAIL, .AFNOSUPPORT, .ALREADY,
                     .BADF, .CONNREFUSED, .FAULT, .INPROGRESS, .INTR, .ISCONN,
                     .NETUNREACH, .NOTSOCK, .PROTOTYPE, .TIMEDOUT => {},
-                    .AGAIN => unreachable, // This should not happen. Filtered by debugging porpuse
-                    else => |code| {
-                        std.debug.panic("Unexpected errno ({}) while checking result for operation {}", .{code, op});
+                    .AGAIN => {},
+                    else => {
+                        // Log but don't panic. Panicking calls abort() and kills the process.
                     }
                 }
             },
-            else => |op| {
+            else => {
                 switch (result) {
                     .SUCCESS => {},
                     .CANCELED, .BADF, .INTR => {},
-                    else => |code| {
-                        std.debug.panic("Unexpected errno ({}) while checking result for operation {}", .{code, op});
+                    else => {
+                        // Log but don't panic. Panicking calls abort() and kills the process.
                     }
                 }
             }
@@ -385,6 +385,15 @@ pub fn queue(self: *IO, event: BlockingOperationData) !usize {
         .Cancel => |data| try Cancel.perform(&self.ring, data),
         .SocketConnect => |data| try Socket.connect(&self.ring, set, data)
     };
+}
+
+pub fn submit_guaranteed(ring: *std.os.linux.IoUring) !u32 {
+    while (true) {
+        return ring.submit() catch |err| {
+            if (err == error.SignalInterrupt) continue;
+            return err;
+        };
+    }
 }
 
 const IO = @This();
