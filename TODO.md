@@ -98,7 +98,6 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 
 **Bugs found & fixed:**
 - **`_force_close` refcounting**: `METH_O` passes borrowed reference, but `defer py_decref(exc_arg)` assumed owned. Fixed with `py_newref`.
-- **Lambda/inner-class protocol factory crash**: Zig refcounting bug — callables from nested scopes get GC'd before Zig code calls them. Workaround: pass class directly to `_Loop.create_*` instead of factory instance.
 - **Raw transport returned to caller**: `_create_ssl_*` returned raw StreamTransport — caller's `transport.write()` bypassed SSL encryption. Fixed: return `_SSLTransportWrapper` via closure capture.
 
 ---
@@ -165,8 +164,7 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 
 ### Known Issues
 
-- **Zig protocol_factory lambdas crash**: Passing lambda or inner-class-callable as `protocol_factory` to `_Loop.create_connection` causes GC-related segfault. Workaround: pass the class directly (e.g., `SP` instead of `Factory()`). Root cause likely in the happy-eyeballs callback chain's refcount management.
-- **`_detach` never called**: `StreamServer.accept_callback` increments `_active_count` via `_attach` but never decrements via `_detach`. `Server.wait_closed()` hangs if connections were accepted. Low-impact — only affects graceful server shutdown with active connections.
+None — all identified bugs are fixed.
 
 ---
 

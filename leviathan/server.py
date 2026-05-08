@@ -32,8 +32,8 @@ class Server:
         self._servers = None
         for srv in servers:
             srv.close()
-        if self._active_count == 0:
-            self._wakeup()
+        self._active_count = 0
+        self._wakeup()
 
     def is_serving(self) -> bool:
         return self._servers is not None and len(self._servers) > 0
