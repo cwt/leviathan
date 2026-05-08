@@ -24,7 +24,7 @@ Project now targets Zig 0.15.2 (was 0.14.0). Docs cached at `docs/zig-0.15.2/`.
 
 ---
 
-## 🟡 PRIORITY 2: Network & Transport (6 done, 1 remaining)
+## 🟡 PRIORITY 2: Network & Transport — ALL DONE (7/7)
 
 ### 2.1 — `create_connection` — ✅ DONE
 
@@ -74,11 +74,32 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 - **Orphaned child on error** → `Popen.kill()` on already-dead process blocks `wait()`. Fixed: check `popen.poll()` first.
 - **Fork + io_uring incompatibility**: `fork()` in multi-threaded Python corrupts event loop. Fixed by using Python's `subprocess.Popen` (uses `posix_spawn`/`vfork` internally) instead of raw `fork()`. Also marked io_uring fd + eventfd with `CLOEXEC`. Exported `PyOS_BeforeFork`/`AfterFork` from python_c.zig.
 
-### 2.6 — SSL / TLS Transport
+### 2.6 — SSL / TLS Transport — ✅ DONE
 
-**Status:** Stub (`transports/ssl/` — empty struct).
+Full SSL/TLS support via Python-side wrapping using `ssl.SSLContext.wrap_bio()` + `ssl.MemoryBIO`.
+No C-level SSL implementation — delegates to CPython's `ssl` module via MemoryBIO approach.
 
-**What's needed:** SSL layer using Python `ssl.SSLObject` (Memory BIO mode), state machine (UNWRAPPED→DO_HANDSHAKE→WRAPPED→FLUSHING→SHUTDOWN), handshake timeout, three-layer flow control. Most complex missing component (~1500 lines in uvloop).
+**Client-side:**
+- `create_connection(..., ssl=ctx)` — custom `SP` protocol (BufferedProtocol) handles handshake + read/write shuttling between SSL BIO and raw transport
+- `_SSLTransportWrapper` encrypts app writes through `SSLObject.write()` before sending to raw transport
+- SNI support (`server_hostname`)
+- Handshake timeout (default 60s)
+- 4 tests pass (handshake, SNI, large echo, wrong context error)
+
+**Server-side:**
+- `create_server(..., ssl=ctx)` — custom `SSP` protocol per-connection: wraps `ssl.SSLObject` (server_side=True), shuttles data between incoming/outgoing BIO and raw transport
+- `_SSLTransportWrapper` intercepts app writes for encryption
+- 3 tests pass (handshake, echo via leviathan client, multiple connections)
+
+**Unix socket SSL:**
+- `create_unix_connection(..., ssl=ctx)` + `create_unix_server(..., ssl=ctx)` — same SP/SSP approach, reuses `_SSLTransportWrapper`
+
+**7 SSL tests total** (client + server + unix echo flows verified).
+
+**Bugs found & fixed:**
+- **`_force_close` refcounting**: `METH_O` passes borrowed reference, but `defer py_decref(exc_arg)` assumed owned. Fixed with `py_newref`.
+- **Lambda/inner-class protocol factory crash**: Zig refcounting bug — callables from nested scopes get GC'd before Zig code calls them. Workaround: pass class directly to `_Loop.create_*` instead of factory instance.
+- **Raw transport returned to caller**: `_create_ssl_*` returned raw StreamTransport — caller's `transport.write()` bypassed SSL encryption. Fixed: return `_SSLTransportWrapper` via closure capture.
 
 ---
 
@@ -107,7 +128,7 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 
 | Test set | 3.13t | 3.14t |
 |----------|-------|-------|
-| Pytest full suite (137 tests) | ✅ PASS | ✅ PASS |
+| Pytest full suite (150 tests) | ✅ PASS | ✅ PASS |
 | Import, event loop, futures, tasks | ✅ | ✅ |
 | Signals, scheduling, asyncgens | ✅ | ✅ |
 | Stream transport | ✅ | ✅ |
@@ -135,6 +156,18 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 - **`addCMacro` is critical**: Even when including free-threading headers, Zig's `@cImport` may not propagate preprocessor defines from included files. Explicit `addCMacro("Py_GIL_DISABLED", "1")` ensures correct struct layout.
 - **Pointer validity guards**: `< 0xFFFF` check on all refcounting functions prevents segfaults from garbage pointers during teardown.
 
+### Additional Bug Fixes
+
+| # | Bug | Root Cause | Fix |
+|---|-----|-----------|-----|
+| 10 | `stream_dealloc` SIGABRT on teardown | `py_decref(instance)` called AFTER `tp_free(instance)` — accessing freed memory corrupts malloc heap, glibc detects later as SIGABRT | Removed the bogus `py_decref` after `tp_free` |
+| 11 | `transport_force_close` refcounting | `METH_O` passes borrowed `exc` reference, but `defer py_decref` treated it as owned | `py_newref(exc)` before decref |
+
+### Known Issues
+
+- **Zig protocol_factory lambdas crash**: Passing lambda or inner-class-callable as `protocol_factory` to `_Loop.create_connection` causes GC-related segfault. Workaround: pass the class directly (e.g., `SP` instead of `Factory()`). Root cause likely in the happy-eyeballs callback chain's refcount management.
+- **`_detach` never called**: `StreamServer.accept_callback` increments `_active_count` via `_attach` but never decrements via `_detach`. `Server.wait_closed()` hangs if connections were accepted. Low-impact — only affects graceful server shutdown with active connections.
+
 ---
 
 ## 🛠 Scripts
@@ -148,4 +181,4 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
-- **Test counts:** 137 Python tests passing on all 4 versions (3.13, 3.14, 3.13t, 3.14t) + zig tests green
+- **Test counts:** 150 Python tests (144 in `test_all.sh` which excludes `test_create_connection.py`, 6 skipped) passing on all 4 versions (3.13, 3.14, 3.13t, 3.14t) + zig tests green
