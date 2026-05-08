@@ -65,6 +65,11 @@ Zig's `self.* = .{ ... }` syntax is dangerous for Python objects allocated via `
 Adding `Py_TPFLAGS_HAVE_GC` without a perfectly stable `tp_traverse` and `tp_clear` is a recipe for intermittent segfaults.
 *   **The Lesson:** Start with manual reference counting (`tp_dealloc` only). Only move to GC tracking once the object lifecycle is fully understood and verified under heavy stress.
 
+### 5. Python's `Popen.__del__` Steals the Exit Status
+Python's `subprocess.Popen` reaps child processes in its `__del__` finalizer. If your code also calls `waitpid`, you get `ECHILD` — and Zig's stdlib panics on it.
+*   **The Bug:** Timer-based exit watcher calls `waitpid` after `Popen.__del__` already reaped the child → `ECHILD` → `unreachable` in `std.posix.waitpid` → `abort()`. Timing-dependent: passed in isolation, crashed after other tests (GC timing shift), worse when PC idle (CPU freq scaling + timer drift).
+*   **The Lesson:** Never call `waitpid` on a PID you don't exclusively own. Either keep the `Popen` object alive (prevent `__del__`), or use raw syscalls with graceful `ECHILD` handling.
+
 ---
 
 ## 🏗 Architectural Mandates (Rules for the Future)
@@ -131,6 +136,7 @@ Python `subprocess.Popen` (handles fork safely) + Zig timer-based exit monitorin
 - **Future result was just transport** → coroutine unpack crash. Fixed: return `(transport, protocol)` tuple.
 - **Orphaned child on error** → `Popen.kill()` on already-dead process blocks `wait()`. Fixed: check `popen.poll()` first.
 - **Fork + io_uring incompatibility**: `fork()` in multi-threaded Python corrupts event loop. Fixed by using Python's `subprocess.Popen` (uses `posix_spawn`/`vfork` internally) instead of raw `fork()`. Also marked io_uring fd + eventfd with `CLOEXEC`. Exported `PyOS_BeforeFork`/`AfterFork` from python_c.zig.
+- **Intermittent SIGABRT on subprocess exit (idle-triggered)**: Python's `Popen.__del__` reaped the subprocess before our timer-based `waitpid` call, returning `ECHILD` (`.CHILD` error) which hit `unreachable` in Zig's `std.posix.waitpid` → `abort()`. This was timing-dependent: passed in isolation, crashed after other tests ran (different GC timing), and was exacerbated by PC idle state (CPU frequency scaling, timer drift). Fixed by: (1) using raw `std.os.linux.wait4` syscall with graceful `ECHILD` handling instead of `std.posix.waitpid`, and (2) keeping `Popen` objects alive in a module-level `_subprocess_popens` dict so `__del__` never runs until we're done.
 
 ### 2.6 — SSL / TLS Transport — ✅ DONE
 
@@ -237,4 +243,4 @@ None — all identified bugs are fixed.
 - **uvloop source:** https://github.com/MagicStack/uvloop (cloned at `/tmp/uvloop_repo`)
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md` + `docs/zig-0.15.2/release-notes.md`
 - **Test commands:** `zig build test` (Zig unit tests), `python setup.py test` (full suite)
-- **Test counts:** 150 Python tests (144 in `test_all.sh` which excludes `test_create_connection.py`, 6 skipped) passing on all 4 versions (3.13, 3.14, 3.13t, 3.14t) + zig tests green
+- **Test counts:** 155 Python tests passing on all 4 versions (3.13, 3.14, 3.13t, 3.14t) + zig tests green

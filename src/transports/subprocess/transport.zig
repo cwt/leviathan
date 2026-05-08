@@ -110,8 +110,33 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
 
     if (data.cancelled or transport.closed) return;
 
-    const result = std.posix.waitpid(transport.pid, std.posix.W.NOHANG);
-    if (result.pid != transport.pid) {
+    // Use raw syscall to handle ECHILD (process already reaped by Python's Popen.__del__)
+    var status: u32 = undefined;
+    const wpid = std.os.linux.wait4(transport.pid, &status, std.posix.W.NOHANG, null);
+    // Linux syscalls return -ERRNO as large usize values
+    if (wpid >= 0xFFFFF000) {
+        const errno: u32 = @truncate(~wpid + 1);
+        const err: std.os.linux.E = @enumFromInt(errno);
+        if (err == .CHILD) {
+            // Process already reaped — shouldn't happen if Popen is kept alive
+            // But handle gracefully just in case
+            transport.returncode = python_c.PyLong_FromLong(-1);
+            if (transport.protocol) |proto| {
+                const pe = python_c.PyObject_GetAttrString(proto, "process_exited\x00");
+                if (pe) |v| {
+                    const r1 = python_c.PyObject_CallNoArgs(v);
+                    if (r1) |rv| python_c.py_decref(rv) else python_c.PyErr_Clear();
+                    python_c.py_decref(v);
+                }
+                const cl = python_c.PyObject_GetAttrString(proto, "connection_lost\x00");
+                if (cl) |v| {
+                    const r2 = python_c.PyObject_CallOneArg(v, python_c.get_py_none_without_incref());
+                    if (r2) |rv| python_c.py_decref(rv) else python_c.PyErr_Clear();
+                    python_c.py_decref(v);
+                }
+            }
+            return;
+        }
         // Still running — re-arm the timer
         const py_loop = transport.loop orelse return;
         const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(py_loop)));
@@ -129,18 +154,34 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
         });
         return;
     }
-    const status = result.status;
+    if (wpid != @as(usize, @intCast(transport.pid))) {
+        // Still running — re-arm the timer
+        const py_loop = transport.loop orelse return;
+        const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(py_loop)));
+        python_c.py_incref(@ptrCast(transport));
+        _ = try loop_data.io.queue(.{
+            .WaitTimer = .{
+                .duration = .{ .sec = 0, .nsec = 100_000_000 },
+                .delay_type = .Relative,
+                .callback = .{
+                    .func = &pidfd_exit_callback,
+                    .cleanup = null,
+                    .data = .{ .user_data = transport, .exception_context = null },
+                },
+            },
+        });
+        return;
+    }
 
-    const rc: c_int = if (std.posix.W.IFEXITED(status))
-        @intCast(std.posix.W.EXITSTATUS(status))
-    else if (std.posix.W.IFSIGNALED(status))
-        -@as(c_int, @intCast(std.posix.W.TERMSIG(status)))
+    const rc: c_int = if (std.posix.W.IFEXITED(@intCast(status)))
+        @intCast(std.posix.W.EXITSTATUS(@intCast(status)))
+    else if (std.posix.W.IFSIGNALED(@intCast(status)))
+        -@as(c_int, @intCast(std.posix.W.TERMSIG(@intCast(status))))
     else
         0;
 
     transport.returncode = python_c.PyLong_FromLong(rc);
 
-    // Notify protocol
     if (transport.protocol) |proto| {
         const pe = python_c.PyObject_GetAttrString(proto, "process_exited\x00") orelse return error.PythonError;
         defer python_c.py_decref(pe);

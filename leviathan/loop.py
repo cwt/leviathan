@@ -22,6 +22,9 @@ logger = getLogger(__package__)
 _T = TypeVar("_T")
 _Ts = TypeVarTuple("_Ts")
 
+# Keep Popen objects alive to prevent __del__ from reaping processes before our exit watcher
+_subprocess_popens: dict[int, Any] = {}
+
 
 class _SSLTransportWrapper:
     """Wraps a raw transport to encrypt writes through an SSL object."""
@@ -743,6 +746,7 @@ class Loop(_Loop):
             stderr=subprocess.DEVNULL if stderr is None else stderr,
             cwd=cwd, env=env, pass_fds=pass_fds if pass_fds is not None else (),
         )
+        _subprocess_popens[popen.pid] = popen
         try:
             return await _Loop.subprocess_exec(
                 self, protocol_factory, pid=popen.pid,
@@ -751,4 +755,5 @@ class Loop(_Loop):
             if popen.poll() is None:
                 popen.kill()
                 popen.wait()
+            _subprocess_popens.pop(popen.pid, None)
             raise
