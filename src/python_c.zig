@@ -15,6 +15,7 @@ pub const PyObject = _c.PyObject;
 pub const PyTypeObject = _c.PyTypeObject;
 pub const PyMethodDef = _c.PyMethodDef;
 pub const PyMemberDef = _c.PyMemberDef;
+pub const PyGetSetDef = _c.PyGetSetDef;
 pub const PyModuleDef = _c.PyModuleDef;
 pub const PyType_Spec = _c.PyType_Spec;
 pub const PyType_Slot = _c.PyType_Slot;

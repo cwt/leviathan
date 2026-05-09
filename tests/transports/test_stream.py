@@ -640,11 +640,11 @@ async def _test_stream_transport_extra_info() -> None:
     try:
         # Test socket info
         socket_info = server_transport.get_extra_info('socket')
-        assert isinstance(socket_info, socket.socket)
+        assert socket_info is not None
         assert socket_info.fileno() == server_socket.fileno()
 
         socket_info = client_transport.get_extra_info('socket')
-        assert isinstance(socket_info, socket.socket)
+        assert socket_info is not None
         assert socket_info.fileno() == client_socket.fileno()
 
         # Test peername

@@ -11,26 +11,20 @@ const Stream = @import("main.zig");
 const StreamTransportObject = Stream.StreamTransportObject;
 
 fn create_socket_instance(self: *StreamTransportObject) !PyObject {
-    const py_fd = python_c.PyLong_FromLong(@intCast(self.fd))
-        orelse return error.PythonError;
-    defer python_c.py_decref(py_fd);
+    const loop_obj: *Loop.Python.LoopObject = @ptrCast(self.loop.?);
+    const loop_data = utils.get_data_ptr(Loop, loop_obj);
+    _ = loop_data;
 
-    const fileno_kname: PyObject = python_c.PyUnicode_FromString("fileno\x00")
-        orelse return error.PythonError;
-    defer python_c.py_decref(fileno_kname);
+    // Use PseudoSocket instead of real socket
+    const py_sock = try utils.PseudoSocket.fast_new_pseudosocket(
+        self.fd,
+        self.family,
+        std.posix.SOCK.STREAM,
+        0
+    );
 
-    var socket_args: [1]PyObject = undefined;
-    socket_args[0] = py_fd;
-
-    const socket_knames = python_c.PyTuple_Pack(1, fileno_kname)
-        orelse return error.PythonError;
-
-    const ret = python_c.PyObject_Vectorcall(utils.PythonImports.socket_class, &socket_args, 0, socket_knames)
-        orelse return error.PythonError;
-
-    self.socket = ret;
-
-    return ret;
+    self.socket = @ptrCast(py_sock);
+    return @ptrCast(py_sock);
 }
 
 inline fn z_transport_get_extra_info(

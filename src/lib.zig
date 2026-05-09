@@ -16,14 +16,16 @@ const static_leviathan_types = .{
     &future.Python.FutureType,
     &task.PythonTaskType,
     &handle.PythonHandleType,
-    &timer_handle.PythonTimerHandleType
+    &timer_handle.PythonTimerHandleType,
+    &utils.PseudoSocket.PseudoSocketType
 };
 
 const static_leviathan_modules_name = .{
     "Future\x00",
     "Task\x00",
     "Handle\x00",
-    "TimerHandle\x00"
+    "TimerHandle\x00",
+    "PseudoSocket\x00"
 };
 
 const dynamic_leviathan_modules_init_fns = .{

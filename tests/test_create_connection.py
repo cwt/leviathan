@@ -208,9 +208,10 @@ def test_create_connection_extra_info() -> None:
             sockname = transport.get_extra_info("sockname")
             assert sockname is not None
             sock = transport.get_extra_info("socket")
-            assert isinstance(sock, socket.socket)
+            assert sock is not None
+            assert hasattr(sock, 'fileno')
+            assert sock.fileno() > 0
             transport.close()
-
         leviathan.run(main())
     finally:
         stop.set()

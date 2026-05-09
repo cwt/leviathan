@@ -1,6 +1,7 @@
 pub const LinkedList = @import("linked_list.zig").LinkedList;
 pub const BTree = @import("btree.zig").BTree;
 pub const PythonImports = @import("python_imports.zig");
+pub const PseudoSocket = @import("pseudosocket.zig");
 pub const Address = @import("address.zig");
 
 const std = @import("std");

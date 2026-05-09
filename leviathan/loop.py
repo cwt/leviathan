@@ -753,3 +753,44 @@ with warnings.catch_warnings():
         def new_event_loop(self) -> Loop:
             """Create and return a new Leviathan event loop."""
             return Loop()
+
+
+class PseudoSocket:
+    def __init__(self, fd, family, type, proto=0):
+        self._fd = fd
+        self._family = family
+        self._type = type
+        self._proto = proto
+
+    def fileno(self):
+        return self._fd
+
+    @property
+    def family(self):
+        return self._family
+
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def proto(self):
+        return self._proto
+
+    def getsockname(self):
+        # This will be overridden or implemented by calling loop methods
+        import socket
+        return socket.fromfd(self._fd, self._family, self._type).getsockname()
+
+    def getpeername(self):
+        import socket
+        return socket.fromfd(self._fd, self._family, self._type).getpeername()
+
+    def setblocking(self, blocking):
+        pass
+
+    def close(self):
+        pass
+
+    def __repr__(self):
+        return f"<PseudoSocket fd={self._fd}, family={self._family}, type={self._type}>"

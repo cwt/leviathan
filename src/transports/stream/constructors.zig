@@ -177,6 +177,12 @@ fn stream_init_configuration(
     self.is_closing = false;
     self.closed = false;
     self.fd = fd;
+    
+    var family: i32 = undefined;
+    _ = std.posix.getsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.DOMAIN, std.mem.asBytes(&family)) catch {
+        family = std.posix.AF.UNSPEC;
+    };
+    self.family = family;
 
     try Read.queue_read_operation(self, read_transport_data, protocol_type);
 }
@@ -198,7 +204,7 @@ inline fn z_stream_new(@"type": *python_c.PyTypeObject) !*StreamTransportObject 
     const instance: *StreamTransportObject = @ptrCast(@"type".tp_alloc.?(@"type", 0) orelse return error.PythonError);
     errdefer @"type".tp_free.?(instance);
 
-    python_c.initialize_object_fields(instance, &.{"ob_base", "fd", "protocol_type", "is_closing", "closed"});
+    python_c.initialize_object_fields(instance, &.{"ob_base", "fd", "family", "protocol_type", "is_closing", "closed"});
 
     // Explicit null for all Python object fields (free-threading safety)
     instance.protocol = null;

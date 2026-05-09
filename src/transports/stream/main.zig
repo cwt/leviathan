@@ -152,6 +152,7 @@ pub const StreamTransportObject = extern struct {
     writing_low_water_mark: usize,
 
     fd: std.posix.fd_t,
+    family: i32,
     protocol_type: ProtocolType,
     is_reading: bool,
     is_writing: bool,
