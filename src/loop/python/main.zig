@@ -84,6 +84,18 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Add a path watcher (internal use only).\x00",
         .ml_flags = python_c.METH_FASTCALL
     },
+    python_c.PyMethodDef{
+        .ml_name = "add_child_handler\x00",
+        .ml_meth = @ptrCast(&Control.loop_add_child_handler),
+        .ml_doc = "Add a child handler.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
+    python_c.PyMethodDef{
+        .ml_name = "remove_child_handler\x00",
+        .ml_meth = @ptrCast(&Control.loop_remove_child_handler),
+        .ml_doc = "Remove a child handler.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
 
     // --------------------- Sheduling ---------------------
     python_c.PyMethodDef{

@@ -25,6 +25,7 @@ pub fn init_module(_: std.mem.Allocator) void {}
 allocator: std.mem.Allocator,
 
 fs_watcher: FSWatcher,
+child_watcher: ChildWatcher,
 
 ready_tasks_queue_index: u8 = 0,
 
@@ -81,11 +82,13 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
         .check_hooks = HooksList.init(allocator),
         .idle_hooks = HooksList.init(allocator),
         .fs_watcher = undefined,
+        .child_watcher = undefined,
         .unix_signals = undefined,
         .io = undefined,
         .dns = undefined,
     };
     try self.fs_watcher.init(self);
+    try self.child_watcher.init(self);
 
     try self.io.init(self, allocator);
     errdefer self.io.deinit();
@@ -109,6 +112,7 @@ pub fn release(self: *Loop) void {
     self.initialized = false;
 
     self.fs_watcher.deinit();
+    self.child_watcher.deinit();
     self.io.deinit();
     self.unix_signals.deinit();
 
@@ -177,6 +181,7 @@ pub const UnixSignals = @import("unix_signals.zig");
 pub const Python = @import("python/main.zig");
 pub const DNS = @import("dns/main.zig");
 pub const FSWatcher = @import("fs_watcher.zig");
+pub const ChildWatcher = @import("child_watcher.zig");
 
 test {
     _ = Runner;

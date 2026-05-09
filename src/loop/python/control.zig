@@ -261,6 +261,35 @@ fn z_loop_add_path_watcher(self: *LoopObject, args: []const ?PyObject) !PyObject
     return @ptrCast(handle);
 }
 
+pub fn loop_add_child_handler(self: ?*LoopObject, args: ?[*]const ?PyObject, nargs: python_c.Py_ssize_t) callconv(.c) ?PyObject {
+    return utils.execute_zig_function(z_loop_add_child_handler, .{ self.?, args.?[0..@as(usize, @intCast(nargs))] });
+}
+
+fn z_loop_add_child_handler(self: *LoopObject, args: []const ?PyObject) !PyObject {
+    if (args.len < 2) return error.PythonError;
+    const pid: i32 = @intCast(python_c.PyLong_AsLong(args[0].?));
+    const py_callback = args[1].?;
+
+    const loop_data = utils.get_data_ptr(Loop, self);
+    try loop_data.child_watcher.add_child_handler(pid, py_callback);
+
+    return python_c.get_py_none();
+}
+
+pub fn loop_remove_child_handler(self: ?*LoopObject, args: ?[*]const ?PyObject, nargs: python_c.Py_ssize_t) callconv(.c) ?PyObject {
+    return utils.execute_zig_function(z_loop_remove_child_handler, .{ self.?, args.?[0..@as(usize, @intCast(nargs))] });
+}
+
+fn z_loop_remove_child_handler(self: *LoopObject, args: []const ?PyObject) !PyObject {
+    if (args.len < 1) return error.PythonError;
+    const pid: i32 = @intCast(python_c.PyLong_AsLong(args[0].?));
+
+    const loop_data = utils.get_data_ptr(Loop, self);
+    const removed = loop_data.child_watcher.remove_child_handler(pid);
+
+    return python_c.PyBool_FromLong(@intCast(@intFromBool(removed)));
+}
+
 pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     if (Loop.Python.check_forked(self.?)) return null;
     const instance = self.?;
