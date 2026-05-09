@@ -1,0 +1,11 @@
+import asyncio
+import leviathan
+import pytest
+
+def test_lru_cache():
+    async def main():
+        loop = asyncio.get_running_loop()
+        # This calls the Zig internal test logic
+        loop._test_lru()
+
+    leviathan.run(main())

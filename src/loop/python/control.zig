@@ -290,6 +290,23 @@ fn z_loop_remove_child_handler(self: *LoopObject, args: []const ?PyObject) !PyOb
     return python_c.PyBool_FromLong(@intCast(@intFromBool(removed)));
 }
 
+pub fn loop_test_lru(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
+    const loop_obj = self.?;
+    const loop_data = utils.get_data_ptr(Loop, loop_obj);
+    
+    var cache = utils.LRUCache(u32, u32).init(loop_data.allocator, 2);
+    defer cache.deinit();
+    
+    cache.put(1, 100) catch return null;
+    cache.put(2, 200) catch return null;
+    if (cache.get(1) != 100) return null;
+    cache.put(3, 300) catch return null;
+    if (cache.get(2) != null) return null;
+    if (cache.get(3) != 300) return null;
+    
+    return python_c.get_py_none();
+}
+
 pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     if (Loop.Python.check_forked(self.?)) return null;
     const instance = self.?;

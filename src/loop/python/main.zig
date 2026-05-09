@@ -96,6 +96,12 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Remove a child handler.\x00",
         .ml_flags = python_c.METH_FASTCALL
     },
+    python_c.PyMethodDef{
+        .ml_name = "_test_lru\x00",
+        .ml_meth = @ptrCast(&Control.loop_test_lru),
+        .ml_doc = "Test LRU cache (internal use only).\x00",
+        .ml_flags = python_c.METH_NOARGS
+    },
 
     // --------------------- Sheduling ---------------------
     python_c.PyMethodDef{
