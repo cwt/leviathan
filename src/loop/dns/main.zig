@@ -64,7 +64,7 @@ fn load_configuration(self: *DNS, allocator: std.mem.Allocator) !void {
     self.configuration = try Parsers.parse_resolv_configuration(allocator, content);
 }
 
-fn get_cache_slot(self: *DNS, hostname: []const u8) *Cache {
+pub fn get_cache_slot(self: *DNS, hostname: []const u8) *Cache {
     var h = std.hash.XxHash3.init(0);
     h.update(hostname);
     const index = h.final();
@@ -91,7 +91,7 @@ pub fn lookup(
         }
 
         // Use native asynchronous resolver
-        try Resolv.queue(cache_slot, self.loop, parsed_hostname, callback.?, self.configuration, ipv6_supported);
+        try Resolv.queue(cache_slot, self.loop, parsed_hostname, callback.?, self.configuration, ipv6_supported, null);
         return null;
     };
 
@@ -106,6 +106,28 @@ pub fn lookup(
     };
 
     return address_list;
+}
+
+pub fn reverse_lookup(
+    self: *DNS,
+    address: std.net.Address,
+    callback: *const CallbackManager.Callback,
+) !void {
+    var buf: [128]u8 = undefined;
+    const name = try Parsers.build_reverse_name(address, &buf);
+
+    const cache_slot = self.get_cache_slot(name);
+    if (cache_slot.get(name)) |record| {
+        if (record.state == .ptr) {
+            // Already resolved
+            try self.loop.reserve_slots(1);
+            errdefer self.loop.reserved_slots -= 1;
+            try Loop.Scheduling.Soon.dispatch(self.loop, callback);
+            return;
+        }
+    }
+
+    try Resolv.queue(cache_slot, self.loop, name, callback, self.configuration, false, .ptr);
 }
 
 fn resolve_via_python_getaddrinfo(hostname: []const u8) ![]std.net.Address {

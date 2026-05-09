@@ -51,6 +51,29 @@ pub fn validate_hostname(hostname: []const u8) bool {
     return true;
 }
 
+pub fn build_reverse_name(address: std.net.Address, buf: []u8) ![]u8 {
+    switch (address.any.family) {
+        std.posix.AF.INET => {
+            const ip = @as([4]u8, @bitCast(address.in.sa.addr));
+            return try std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}.in-addr.arpa", .{ ip[3], ip[2], ip[1], ip[0] });
+        },
+        std.posix.AF.INET6 => {
+            const ip = @as([16]u8, @bitCast(address.in6.sa.addr));
+            var offset: usize = 0;
+            var i: usize = 16;
+            while (i > 0) {
+                i -= 1;
+                const byte = ip[i];
+                const high = (byte >> 4) & 0x0F;
+                const low = byte & 0x0F;
+                offset += (try std.fmt.bufPrint(buf[offset..], "{x:1}.{x:1}.", .{ low, high })).len;
+            }
+            return try std.fmt.bufPrint(buf[offset..], "ip6.arpa", .{});
+        },
+        else => return error.UnsupportedAddressFamily,
+    }
+}
+
 pub fn parse_name(full_data: []const u8, initial_offset: usize, allocator: std.mem.Allocator) ![]u8 {
     var result = std.ArrayListUnmanaged(u8){};
     errdefer result.deinit(allocator);

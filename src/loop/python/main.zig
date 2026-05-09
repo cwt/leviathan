@@ -211,6 +211,12 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Resolve a hostname to a list of address tuples.\x00",
         .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
     },
+    python_c.PyMethodDef{
+        .ml_name = "getnameinfo\x00",
+        .ml_meth = @ptrCast(&IO.Socket.getnameinfo.loop_getnameinfo),
+        .ml_doc = "Resolve a sockaddr to a (host, port) tuple.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
     // --------------------- Socket Ops ---------------------
     python_c.PyMethodDef{
         .ml_name = "sock_accept\x00",

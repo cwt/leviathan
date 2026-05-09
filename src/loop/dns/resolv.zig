@@ -415,6 +415,7 @@ fn build_queries(
     ipv6_supported: bool,
     hostnames_array: HostnamesArray,
     server_address: *const std.net.Address,
+    question_type: ?QuestionType,
 ) !void {
     const socket_fd = try std.posix.socket(
         server_address.any.family,
@@ -431,10 +432,13 @@ fn build_queries(
     var offset: usize = 0;
     for (0.., hostnames_array.array[0..hostnames_array.len]) |index, hostname_info| {
         const hostname = hostname_info.hostname[0..hostname_info.hostname_len];
-        offset += build_query(@intCast(index), payload[offset..], .ipv4, hostname);
-
-        if (ipv6_supported) {
-            offset += build_query(@intCast(index), payload[offset..], .ipv6, hostname);
+        if (question_type) |qt| {
+            offset += build_query(@intCast(index), payload[offset..], qt, hostname);
+        } else {
+            offset += build_query(@intCast(index), payload[offset..], .ipv4, hostname);
+            if (ipv6_supported) {
+                offset += build_query(@intCast(index), payload[offset..], .ipv6, hostname);
+            }
         }
     }
 
@@ -449,8 +453,8 @@ fn build_queries(
         .control_data = control_data,
         .hostnames_array = hostnames_array,
 
-        .results = std.ArrayList(std.net.Address){},
-        .ptr_results = std.ArrayList([]u8){},
+        .results = .{},
+        .ptr_results = .{},
     };
 }
 
@@ -503,6 +507,7 @@ fn prepare_data(
     user_callback: *const CallbackManager.Callback,
     configuration: Parsers.Configuration,
     ipv6_supported: bool,
+    question_type: ?QuestionType,
 ) !*ControlData {
     const allocator = cache_slot.allocator;
 
@@ -550,6 +555,7 @@ fn prepare_data(
             ipv6_supported,
             hostnames_array,
             server_address,
+            question_type,
         );
 
         queries_built += 1;
@@ -565,6 +571,7 @@ pub fn queue(
     user_callback: *const CallbackManager.Callback,
     configuration: Parsers.Configuration,
     ipv6_supported: bool,
+    question_type: ?QuestionType,
 ) !void {
     const control_data = try prepare_data(
         cache_slot,
@@ -573,6 +580,7 @@ pub fn queue(
         user_callback,
         configuration,
         ipv6_supported,
+        question_type,
     );
 
     var queries_sent: usize = 0;
