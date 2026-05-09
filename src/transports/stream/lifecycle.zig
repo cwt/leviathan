@@ -39,9 +39,28 @@ pub fn close_transports(
     transport.is_writing = false;
 
     if (!closed_already) {
-        const ret = python_c.PyObject_CallOneArg(transport.protocol_connection_lost.?, exception)
-            orelse return error.PythonError;
-        python_c.py_decref(ret);
+        const loop_obj = transport.loop.?;
+        
+        // Check if loop is closed
+        const is_closed_attr = python_c.PyObject_GetAttrString(loop_obj, "is_closed\x00") orelse return error.PythonError;
+        defer python_c.py_decref(is_closed_attr);
+        const is_closed_py = python_c.PyObject_CallNoArgs(is_closed_attr) orelse return error.PythonError;
+        defer python_c.py_decref(is_closed_py);
+        
+        if (python_c.PyObject_IsTrue(is_closed_py) != 0) {
+            // Loop is closed, call immediately
+            const ret = python_c.PyObject_CallOneArg(transport.protocol_connection_lost.?, exception)
+                orelse return error.PythonError;
+            python_c.py_decref(ret);
+        } else {
+            // Loop is open, defer call
+            const call_soon = python_c.PyObject_GetAttrString(loop_obj, "call_soon\x00") orelse return error.PythonError;
+            defer python_c.py_decref(call_soon);
+            
+            const ret = python_c.PyObject_CallFunctionObjArgs(call_soon, transport.protocol_connection_lost.?, exception, @as(?*python_c.PyObject, null))
+                orelse return error.PythonError;
+            python_c.py_decref(ret);
+        }
     }
 }
 

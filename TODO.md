@@ -197,9 +197,9 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 | 3.6 | Child watcher | S | ✅ DONE |
 | 3.7 | PseudoSocket | S | ✅ DONE |
 | 3.8 | LRU cache | S | ✅ DONE |
-| 3.9 | Connection lost deferred scheduling | S | — |
-
+| 3.9 | Connection lost deferred scheduling | S | ✅ DONE |
 | 3.10 | Fork safety (`pthread_atfork`) | S | ✅ DONE |
+
 | 3.11 | DNS enhancements | M | — |
 | 3.12 | macOS / BSD support | XL | — |
 
