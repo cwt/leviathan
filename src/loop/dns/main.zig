@@ -90,21 +90,8 @@ pub fn lookup(
             return v;
         }
 
-        // Use Python's getaddrinfo for external hostnames since io_uring
-        // doesn't work with UDP on some kernels
-        const addresses = try resolve_via_python_getaddrinfo(hostname);
-        errdefer self.allocator.free(addresses);
-
-        // Store in cache
-        _ = try cache_slot.create_new_record_from_resolved(
-            parsed_hostname, addresses, 60
-        );
-
-        // Dispatch callback immediately
-        try self.loop.reserve_slots(1);
-        errdefer self.loop.reserved_slots -= 1;
-
-        try Loop.Scheduling.Soon.dispatch(self.loop, callback.?);
+        // Use native asynchronous resolver
+        try Resolv.queue(cache_slot, self.loop, parsed_hostname, callback.?, self.configuration, ipv6_supported);
         return null;
     };
 

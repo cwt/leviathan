@@ -51,6 +51,38 @@ pub fn validate_hostname(hostname: []const u8) bool {
     return true;
 }
 
+pub fn parse_name(full_data: []const u8, initial_offset: usize, allocator: std.mem.Allocator) ![]u8 {
+    var result = std.ArrayListUnmanaged(u8){};
+    errdefer result.deinit(allocator);
+    
+    var offset = initial_offset;
+    var jump_offset: ?usize = null;
+    var visited_pointers: usize = 0;
+    const max_pointers = 10;
+
+    while (offset < full_data.len) {
+        const byte = full_data[offset];
+        if (byte == 0) {
+            offset += 1;
+            break;
+        }
+        if ((byte & 0xC0) == 0xC0) {
+            if (visited_pointers >= max_pointers) return error.MalformedDnsResponse;
+            if (jump_offset == null) jump_offset = offset + 2;
+            visited_pointers += 1;
+            offset = (@as(usize, byte & 0x3F) << 8) | full_data[offset + 1];
+            continue;
+        }
+        
+        if (offset + 1 + byte > full_data.len) return error.MalformedDnsResponse;
+        if (result.items.len > 0) try result.append(allocator, '.');
+        try result.appendSlice(allocator, full_data[offset + 1 .. offset + 1 + byte]);
+        offset += @as(usize, byte) + 1;
+    }
+    
+    return try result.toOwnedSlice(allocator);
+}
+
 pub fn resolve_address(hostname: []const u8, allow_ipv6: bool) !?[]const std.net.Address {
     // 1. Check for localhost
     if (std.mem.eql(u8, hostname, "localhost")) {

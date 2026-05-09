@@ -1,34 +1,43 @@
 const std = @import("std");
 
 pub fn LRUCache(comptime K: type, comptime V: type) type {
+    const LNode = struct {
+        key: K,
+        value: V,
+        prev: ?*@This() = null,
+        next: ?*@This() = null,
+    };
+    const MapType = if (K == []const u8) std.StringHashMap(*LNode) else std.AutoHashMap(K, *LNode);
     return struct {
         const Self = @This();
         
-        pub const Node = struct {
-            key: K,
-            value: V,
-            prev: ?*Node = null,
-            next: ?*Node = null,
-        };
+        pub const Node = LNode;
+        pub const EvictCallback = *const fn (ctx: ?*anyopaque, key: K, value: V) void;
 
         allocator: std.mem.Allocator,
         capacity: usize,
-        map: std.AutoHashMap(K, *Node),
+        map: MapType,
         head: ?*Node = null,
         tail: ?*Node = null,
+        evict_callback: ?EvictCallback = null,
+        evict_ctx: ?*anyopaque = null,
 
         pub fn init(allocator: std.mem.Allocator, capacity: usize) Self {
             return .{
                 .allocator = allocator,
                 .capacity = capacity,
-                .map = std.AutoHashMap(K, *Node).init(allocator),
+                .map = MapType.init(allocator),
             };
         }
 
         pub fn deinit(self: *Self) void {
             var it = self.map.iterator();
             while (it.next()) |entry| {
-                self.allocator.destroy(entry.value_ptr.*);
+                const node = entry.value_ptr.*;
+                if (self.evict_callback) |cb| {
+                    cb(self.evict_ctx, node.key, node.value);
+                }
+                self.allocator.destroy(node);
             }
             self.map.deinit();
         }
@@ -60,6 +69,33 @@ pub fn LRUCache(comptime K: type, comptime V: type) type {
             
             try self.map.put(key, node);
             self.prepend(node);
+        }
+
+        pub fn remove(self: *Self, key: K) bool {
+            if (self.map.fetchRemove(key)) |entry| {
+                const node = entry.value;
+                if (self.evict_callback) |cb| {
+                    cb(self.evict_ctx, node.key, node.value);
+                }
+                self.remove_node(node);
+                self.allocator.destroy(node);
+                return true;
+            }
+            return false;
+        }
+
+        pub fn pop_tail(self: *Self) ?V {
+            if (self.tail) |node| {
+                const value = node.value;
+                if (self.evict_callback) |cb| {
+                    cb(self.evict_ctx, node.key, node.value);
+                }
+                _ = self.map.remove(node.key);
+                self.remove_node(node);
+                self.allocator.destroy(node);
+                return value;
+            }
+            return null;
         }
 
         fn move_to_front(self: *Self, node: *Node) void {
@@ -96,6 +132,9 @@ pub fn LRUCache(comptime K: type, comptime V: type) type {
 
         fn evict_last(self: *Self) void {
             if (self.tail) |node| {
+                if (self.evict_callback) |cb| {
+                    cb(self.evict_ctx, node.key, node.value);
+                }
                 _ = self.map.remove(node.key);
                 self.remove_node(node);
                 self.allocator.destroy(node);

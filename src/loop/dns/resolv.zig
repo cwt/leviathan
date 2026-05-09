@@ -32,6 +32,7 @@ const ResultHeader = packed struct {
 const QuestionType = enum(u16) {
     ipv4 = 1,
     ipv6 = 28,
+    ptr = 12,
 };
 
 const QuestionTypeClass = packed struct {
@@ -70,6 +71,7 @@ const ServerQueryData = struct {
     payload_offset: usize = 0,
 
     results: std.ArrayList(std.net.Address),
+    ptr_results: std.ArrayList([]u8),
     results_to_process: u16 = 0,
 
     min_ttl: u32 = std.math.maxInt(u32),
@@ -90,6 +92,11 @@ const ServerQueryData = struct {
         self.cancel();
 
         const control_data = self.control_data;
+        for (self.ptr_results.items) |v| {
+            control_data.allocator.free(v);
+        }
+        self.ptr_results.deinit(control_data.allocator);
+
         control_data.tasks_finished += 1;
 
         const finalized = (control_data.tasks_finished == control_data.queries_data.len);
@@ -142,11 +149,13 @@ fn mark_resolved_and_execute_user_callbacks(server_data: *ServerQueryData) !void
         sd.cancel();
     }
 
-    const address_list = try control_data.allocator.dupe(std.net.Address, server_data.results.items);
-
-    control_data.record.set_resolved_data(
-        address_list, server_data.min_ttl
-    );
+    if (server_data.ptr_results.items.len > 0) {
+        const ptr_name = try control_data.allocator.dupe(u8, server_data.ptr_results.items[0]);
+        control_data.record.set_ptr_data(ptr_name, server_data.min_ttl);
+    } else {
+        const address_list = try control_data.allocator.dupe(std.net.Address, server_data.results.items);
+        control_data.record.set_resolved_data(address_list, server_data.min_ttl);
+    }
 
     const loop = control_data.loop;
     for (control_data.user_callbacks.items) |*v| {
@@ -233,44 +242,42 @@ fn skip_name(data: []const u8, initial_offset: usize) ?usize {
     return null;
 }
 
-fn parse_individual_dns_result(data: []const u8, result: *std.net.Address, new_result: *bool, ttl: *u32) ?usize {
-    var offset = skip_name(data, 0) orelse return null;
+fn parse_individual_dns_result(full_data: []const u8, initial_offset: usize, result: *std.net.Address, ptr_name: *?[]u8, ttl: *u32, allocator: std.mem.Allocator) ?usize {
+    var offset = skip_name(full_data, initial_offset) orelse return null;
 
-    if ((offset + 10) > data.len) return null;
+    if ((offset + 10) > full_data.len) return null;
 
-    const r_type = std.mem.readInt(u16, data[offset .. offset + 2][0..2], .big);
-    const r_class = std.mem.readInt(u16, data[offset + 2 .. offset + 4][0..2], .big);
-    const r_ttl = std.mem.readInt(u32, data[offset + 4 .. offset + 8][0..4], .big);
-    const r_data_len = std.mem.readInt(u16, data[offset + 8 .. offset + 10][0..2], .big);
+    const r_type = std.mem.readInt(u16, full_data[offset .. offset + 2][0..2], .big);
+    const r_class = std.mem.readInt(u16, full_data[offset + 2 .. offset + 4][0..2], .big);
+    const r_ttl = std.mem.readInt(u32, full_data[offset + 4 .. offset + 8][0..4], .big);
+    const r_data_len = std.mem.readInt(u16, full_data[offset + 8 .. offset + 10][0..2], .big);
     offset += 10;
 
     const next_rr_offset = offset + @as(usize, @intCast(r_data_len));
-    if (next_rr_offset > data.len) return null;
+    if (next_rr_offset > full_data.len) return null;
 
     if (r_class == 1) { // IN class
         switch (r_type) {
             1 => { // A
-                if (offset + 4 > data.len) return null;
+                if (offset + 4 > full_data.len) return null;
                 var addr: [4]u8 = undefined;
-                @memcpy(&addr, data[offset..(offset + 4)]);
+                @memcpy(&addr, full_data[offset..(offset + 4)]);
                 result.* = std.net.Address.initIp4(addr, 0);
-                new_result.* = true;
                 ttl.* = r_ttl;
             },
             28 => { // AAAA
-                if (offset + 16 > data.len) return null;
+                if (offset + 16 > full_data.len) return null;
                 var addr: [16]u8 = undefined;
-                @memcpy(&addr, data[offset..(offset + 16)]);
+                @memcpy(&addr, full_data[offset..(offset + 16)]);
                 result.* = std.net.Address.initIp6(addr, 0, 0, 0);
-                new_result.* = true;
                 ttl.* = r_ttl;
             },
-            else => {
-                new_result.* = false;
+            12 => { // PTR
+                ptr_name.* = Parsers.parse_name(full_data, offset, allocator) catch null;
+                ttl.* = r_ttl;
             },
+            else => {},
         }
-    } else {
-        new_result.* = false;
     }
 
     return next_rr_offset;
@@ -338,18 +345,23 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
             },
             .process_body => while (results_to_process > 0) {
                 var result: std.net.Address = undefined;
-                var new_result: bool = true;
+                var ptr_name: ?[]u8 = null;
                 var ttl: u32 = std.math.maxInt(u32);
 
                 const new_offset = parse_individual_dns_result(
-                    response[offset..],
+                    response[0..data_received],
+                    offset,
                     &result,
-                    &new_result,
+                    &ptr_name,
                     &ttl,
+                    server_data.control_data.arena.allocator(),
                 ) orelse break;
 
-                offset += new_offset;
-                if (new_result) {
+                offset = new_offset;
+                if (ptr_name) |name| {
+                    try server_data.ptr_results.append(server_data.control_data.arena.allocator(), name);
+                    server_data.min_ttl = @min(server_data.min_ttl, ttl);
+                } else if (result.any.family != 0) {
                     try server_data.results.append(server_data.control_data.arena.allocator(), result);
                     server_data.min_ttl = @min(server_data.min_ttl, ttl);
                 }
@@ -363,7 +375,7 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
     server_data.hostnames_array.processed = hostnames_processed;
     server_data.results_to_process = results_to_process;
 
-    if (server_data.results.items.len > 0) {
+    if (server_data.results.items.len > 0 or server_data.ptr_results.items.len > 0) {
         try mark_resolved_and_execute_user_callbacks(server_data);
     }
 }
@@ -438,6 +450,7 @@ fn build_queries(
         .hostnames_array = hostnames_array,
 
         .results = std.ArrayList(std.net.Address){},
+        .ptr_results = std.ArrayList([]u8){},
     };
 }
 
@@ -614,12 +627,12 @@ test "skip_name: mixed labels and pointer" {
 test "parse_individual_dns_result: A record" {
     const data = "\xC0\x0C\x00\x01\x00\x01\x00\x00\x01\x2C\x00\x04\xD8\x3A\xD3\xA4";
     var res: std.net.Address = undefined;
-    var new_res: bool = false;
+    var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
 
-    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    const next_offset = parse_individual_dns_result(data, 0, &res, &ptr_name, &ttl, std.testing.allocator).?;
     try std.testing.expectEqual(@as(usize, 16), next_offset);
-    try std.testing.expect(new_res);
+    try std.testing.expect(ptr_name == null);
     try std.testing.expectEqual(@as(u32, 300), ttl);
     try std.testing.expectEqual(std.posix.AF.INET, res.any.family);
 }
@@ -627,12 +640,12 @@ test "parse_individual_dns_result: A record" {
 test "parse_individual_dns_result: AAAA record" {
     const data = "\xC0\x0C\x00\x1C\x00\x01\x00\x00\x01\x2C\x00\x10\x2A\x00\x14\x50\x40\x01\x08\x03\x00\x00\x00\x00\x00\x00\x20\x0E";
     var res: std.net.Address = undefined;
-    var new_res: bool = false;
+    var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
 
-    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    const next_offset = parse_individual_dns_result(data, 0, &res, &ptr_name, &ttl, std.testing.allocator).?;
     try std.testing.expectEqual(@as(usize, 28), next_offset);
-    try std.testing.expect(new_res);
+    try std.testing.expect(ptr_name == null);
     try std.testing.expectEqual(std.posix.AF.INET6, res.any.family);
 }
 
@@ -653,32 +666,32 @@ test "skip_name: malformed" {
 test "parse_individual_dns_result: truncated record" {
     const data = "\xC0\x0C\x00\x01\x00\x01\x00\x00\x01\x2C\x00\x04\xD8\x3A";
     var res: std.net.Address = undefined;
-    var new_res: bool = false;
+    var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
     
-    try std.testing.expectEqual(@as(?usize, null), parse_individual_dns_result(data, &res, &new_res, &ttl));
+    try std.testing.expectEqual(@as(?usize, null), parse_individual_dns_result(data, 0, &res, &ptr_name, &ttl, std.testing.allocator));
 }
 
 test "parse_individual_dns_result: skip non-IN class" {
     const data = "\xC0\x0C\x00\x01\x00\x02\x00\x00\x01\x2C\x00\x04\xD8\x3A\xD3\xA4";
     var res: std.net.Address = undefined;
-    var new_res: bool = true;
+    var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
     
-    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    const next_offset = parse_individual_dns_result(data, 0, &res, &ptr_name, &ttl, std.testing.allocator).?;
     try std.testing.expectEqual(@as(usize, 16), next_offset);
-    try std.testing.expect(!new_res);
+    try std.testing.expect(ptr_name == null);
 }
 
 test "parse_individual_dns_result: ignore CNAME" {
     // Type 5 is CNAME
     const data = "\xC0\x0C\x00\x05\x00\x01\x00\x00\x01\x2C\x00\x02\xC0\x12";
     var res: std.net.Address = undefined;
-    var new_res: bool = true;
+    var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
     
-    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    const next_offset = parse_individual_dns_result(data, 0, &res, &ptr_name, &ttl, std.testing.allocator).?;
     try std.testing.expectEqual(@as(usize, 14), next_offset);
-    try std.testing.expect(!new_res);
+    try std.testing.expect(ptr_name == null);
 }
 

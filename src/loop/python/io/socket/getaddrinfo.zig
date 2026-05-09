@@ -16,67 +16,80 @@ const GetAddrInfoData = struct {
     loop: *LoopObject,
     host: []u8,
     port: u16,
+    family: i32,
+    socket_type: i32,
+    proto: i32,
     allocator: std.mem.Allocator,
 };
 
 fn getaddrinfo_callback(data: *const CallbackManager.CallbackData) !void {
     const gaid: *GetAddrInfoData = @alignCast(@ptrCast(data.user_data.?));
     defer {
+        python_c.py_decref(@ptrCast(gaid.future));
+        python_c.py_decref(@ptrCast(gaid.loop));
         gaid.allocator.free(gaid.host);
         gaid.allocator.destroy(gaid);
     }
     const loop_data = utils.get_data_ptr(Loop, gaid.loop);
+    
     if (data.cancelled) {
-        python_c.raise_python_runtime_error("getaddrinfo cancelled");
-        return error.PythonError;
+        return;
     }
+
     const address_list = try loop_data.dns.lookup(gaid.host, null) orelse {
-        python_c.raise_python_runtime_error("Failed to resolve host");
-        return error.PythonError;
+        // This shouldn't happen if we are called back after Resolv.queue
+        const exc = python_c.PyObject_CallFunction(python_c.PyExc_RuntimeError, "s\x00", "Failed to resolve host\x00") orelse return error.PythonError;
+        defer python_c.py_decref(exc);
+        const future_data = utils.get_data_ptr(Future, gaid.future);
+        Future.Python.Result.future_fast_set_exception(gaid.future, future_data, exc);
+        return;
     };
-    const py_tuple = try build_result_tuple(address_list, gaid.port);
-    const future_data2 = utils.get_data_ptr(Future, gaid.future);
-    Future.Python.Result.future_fast_set_result(future_data2, py_tuple);
-    python_c.py_decref(py_tuple);
+
+    const py_tuple = try build_result_tuple(address_list, gaid.port, gaid.family, gaid.socket_type, gaid.proto);
+    defer python_c.py_decref(py_tuple);
+
+    const future_data = utils.get_data_ptr(Future, gaid.future);
+    Future.Python.Result.future_fast_set_result(future_data, py_tuple);
 }
 
-fn build_result_tuple(address_list: []const std.net.Address, port: u16) !PyObject {
-    const py_list = python_c.PyTuple_New(@intCast(address_list.len)) orelse return error.PythonError;
-    errdefer python_c.py_decref(py_list);
-    for (address_list, 0..) |addr, i| {
-        var host_buf: [64]u8 = undefined;
-        const host = blk: {
-            if (addr.any.family == std.posix.AF.INET) {
-                const raw = @as(u32, @bitCast(addr.in.sa.addr));
-                break :blk try std.fmt.bufPrint(&host_buf, "{d}.{d}.{d}.{d}", .{
-                    (raw >> 0) & 0xFF, (raw >> 8) & 0xFF, (raw >> 16) & 0xFF, (raw >> 24) & 0xFF,
-                });
-            }
-            break :blk "::1";
-        };
-        const sockaddr = python_c.PyTuple_Pack(2,
-            python_c.PyUnicode_FromStringAndSize(host.ptr, @intCast(host.len)) orelse return error.PythonError,
-            python_c.PyLong_FromLong(@intCast(port)) orelse return error.PythonError,
-        ) orelse return error.PythonError;
+fn build_result_tuple(address_list: []const std.net.Address, port: u16, family_filter: i32, socket_type: i32, proto: i32) !PyObject {
+    var filtered_count: usize = 0;
+    for (address_list) |addr| {
+        if (family_filter != 0 and addr.any.family != family_filter) continue;
+        filtered_count += 1;
+    }
+
+    const py_tuple = python_c.PyTuple_New(@intCast(filtered_count)) orelse return error.PythonError;
+    errdefer python_c.py_decref(py_tuple);
+    
+    var idx: usize = 0;
+    for (address_list) |addr| {
+        if (family_filter != 0 and addr.any.family != family_filter) continue;
+
+        const sockaddr = try utils.Address.to_py_addr_with_port(addr, port);
+        defer python_c.py_decref(sockaddr);
+
         const entry = python_c.PyTuple_Pack(5,
-            python_c.PyLong_FromLong(std.posix.AF.INET),
-            python_c.PyLong_FromLong(std.posix.SOCK.STREAM),
-            python_c.PyLong_FromLong(0),
+            python_c.PyLong_FromLong(addr.any.family),
+            python_c.PyLong_FromLong(if (socket_type != 0) socket_type else std.posix.SOCK.STREAM),
+            python_c.PyLong_FromLong(proto),
             python_c.get_py_none_without_incref(),
             sockaddr,
         ) orelse return error.PythonError;
-        if (python_c.PyTuple_SetItem(py_list, @intCast(i), entry) != 0) {
+        
+        if (python_c.PyTuple_SetItem(py_tuple, @intCast(idx), entry) != 0) {
             python_c.py_decref(entry);
             return error.PythonError;
         }
+        idx += 1;
     }
-    return py_list;
+    return py_tuple;
 }
 
-inline fn z_loop_getaddrinfo(self: *LoopObject, args: []?PyObject, knames: ?PyObject) !*FutureObject {
+inline fn z_loop_getaddrinfo(self: *LoopObject, args: []const ?PyObject, knames: ?PyObject) !*FutureObject {
     if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 1) {
-        python_c.raise_python_value_error("host argument is required");
+        python_c.raise_python_value_error("host argument is required\x00");
         return error.PythonError;
     }
     const py_host = args[0].?;
@@ -88,13 +101,14 @@ inline fn z_loop_getaddrinfo(self: *LoopObject, args: []?PyObject, knames: ?PyOb
     var py_proto: ?PyObject = null;
     var py_flags: ?PyObject = null;
     try python_c.parse_vector_call_kwargs(
-        knames, args.ptr + args.len,
+        knames, @constCast(args.ptr + args.len),
         &.{ "family", "type", "proto", "flags" },
         &.{ &py_family, &py_type, &py_proto, &py_flags },
     );
 
     const port: u16 = blk: {
         if (py_port) |p| {
+            if (python_c.is_none(p)) break :blk 0;
             const v = python_c.PyLong_AsInt(p);
             if (v == -1 and python_c.PyErr_Occurred() != null) return error.PythonError;
             break :blk @intCast(v);
@@ -102,45 +116,59 @@ inline fn z_loop_getaddrinfo(self: *LoopObject, args: []?PyObject, knames: ?PyOb
         break :blk 0;
     };
 
+    const family: i32 = if (py_family) |f| @intCast(python_c.PyLong_AsLong(f)) else 0;
+    const socket_type: i32 = if (py_type) |t| @intCast(python_c.PyLong_AsLong(t)) else 0;
+    const proto: i32 = if (py_proto) |pr| @intCast(python_c.PyLong_AsLong(pr)) else 0;
+
     const loop_data = utils.get_data_ptr(Loop, self);
     const alloc = loop_data.allocator;
     const fut = try Future.Python.Constructors.fast_new_future(self);
-    const host_str = try get_string(py_host, alloc);
+    errdefer python_c.py_decref(@ptrCast(fut));
+
+    var c_size: python_c.Py_ssize_t = 0;
+    const ptr = python_c.PyUnicode_AsUTF8AndSize(py_host, &c_size) orelse return error.PythonError;
+    const host_str = try alloc.dupe(u8, ptr[0..@intCast(c_size)]);
+    errdefer alloc.free(host_str);
 
     const gaid = try alloc.create(GetAddrInfoData);
     errdefer alloc.destroy(gaid);
-    gaid.* = .{ .future = fut, .loop = self, .host = host_str, .port = port, .allocator = alloc };
+    gaid.* = .{
+        .future = @ptrCast(python_c.py_newref(@as(*python_c.PyObject, @ptrCast(fut)))),
+        .loop = python_c.py_newref(self),
+        .host = host_str,
+        .port = port,
+        .family = family,
+        .socket_type = socket_type,
+        .proto = proto,
+        .allocator = alloc,
+    };
 
     const callback = CallbackManager.Callback{
         .func = &getaddrinfo_callback,
         .cleanup = null,
         .data = .{ .user_data = gaid, .exception_context = null },
     };
-    const address_list = try loop_data.dns.lookup(host_str, &callback) orelse return fut;
-
-    defer {
+    
+    const address_list = try loop_data.dns.lookup(host_str, &callback);
+    if (address_list) |al| {
+        // Result was in cache
+        const py_res = try build_result_tuple(al, port, family, socket_type, proto);
+        defer python_c.py_decref(py_res);
+        const future_data = utils.get_data_ptr(Future, fut);
+        Future.Python.Result.future_fast_set_result(future_data, py_res);
+        
+        // Cleanup gaid and host_str since callback won't be called
+        python_c.py_decref(@ptrCast(gaid.future));
+        python_c.py_decref(@ptrCast(gaid.loop));
         alloc.free(host_str);
         alloc.destroy(gaid);
     }
 
-    const py_tuple = try build_result_tuple(address_list, port);
-    const future_data = utils.get_data_ptr(Future, fut);
-    Future.Python.Result.future_fast_set_result(future_data, py_tuple);
-    python_c.py_decref(py_tuple);
     return fut;
 }
 
-fn get_string(py_obj: PyObject, alloc: std.mem.Allocator) ![]u8 {
-    var c_size: python_c.Py_ssize_t = 0;
-    const ptr = python_c.PyUnicode_AsUTF8AndSize(py_obj, &c_size) orelse return error.PythonError;
-    const size: usize = @intCast(c_size);
-    const r = try alloc.alloc(u8, size);
-    @memcpy(r, ptr[0..size]);
-    return r;
-}
-
 pub fn loop_getaddrinfo(
-    self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
+    self: ?*LoopObject, args: ?[*]const ?PyObject, nargs: python_c.Py_ssize_t, knames: ?PyObject
 ) callconv(.c) ?*FutureObject {
     return utils.execute_zig_function(
         z_loop_getaddrinfo, .{ self.?, args.?[0..@as(usize, @intCast(nargs))], knames },

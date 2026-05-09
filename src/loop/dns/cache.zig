@@ -8,6 +8,7 @@ const CallbackManager = @import("callback_manager");
 const RecordState = union(enum) {
     pending: *Resolv.ControlData,
     resolved: []std.net.Address,
+    ptr: []u8,
     none,
 };
 
@@ -20,7 +21,8 @@ pub const Record = struct {
         return switch (self.state) {
             .pending => null,
             .resolved => |d| d,
-            .none => @panic("Attempt to get data from empty record") // Read `get` Cache's method
+            .ptr => null,
+            .none => @panic("Attempt to get data from empty record")
         };
     }
 
@@ -40,20 +42,50 @@ pub const Record = struct {
         };
     }
 
+    pub inline fn set_ptr_data(self: *Record, hostname: []u8, ttl: u32) void {
+        var expire_at: i64 = std.math.maxInt(i64);
+        if (ttl < std.math.maxInt(u32)) {
+            expire_at = std.time.timestamp() + ttl;
+        }
+
+        self.expire_at = expire_at;
+        self.state = .{
+            .ptr = hostname
+        };
+    }
+
     pub inline fn discard(self: *Record) void {
         self.state = .none;
         self.expire_at = 0;
     }
 };
 
-const RecordLinkedList = utils.LinkedList(Record);
+const RecordCache = utils.LRUCache([]const u8, *Record);
+
+fn evict_record(ctx: ?*anyopaque, key: []const u8, record: *Record) void {
+    const self: *Cache = @alignCast(@ptrCast(ctx.?));
+    self.allocator.free(key);
+    switch (record.state) {
+        .resolved => |v| self.allocator.free(v),
+        .ptr => |v| self.allocator.free(v),
+        else => {},
+    }
+    self.allocator.destroy(record);
+}
 
 allocator: std.mem.Allocator,
-records_list: RecordLinkedList,
+cache: RecordCache,
 
 pub fn init(self: *Cache, allocator: std.mem.Allocator) void {
     self.allocator = allocator;
-    self.records_list = RecordLinkedList.init(allocator);
+    self.cache = RecordCache.init(allocator, 1024);
+    self.cache.evict_callback = &evict_record;
+    self.cache.evict_ctx = self;
+}
+
+pub fn deinit(self: *Cache) void {
+    // LRUCache.deinit will call evict_record for each entry
+    self.cache.deinit();
 }
 
 pub fn create_new_record(self: *Cache, hostname: []const u8, control_data: *Resolv.ControlData) !*Record {
@@ -61,7 +93,10 @@ pub fn create_new_record(self: *Cache, hostname: []const u8, control_data: *Reso
     const new_hostname = try allocator.dupe(u8, hostname);
     errdefer allocator.free(new_hostname);
 
-    const new_record = Record{
+    const record = try allocator.create(Record);
+    errdefer allocator.destroy(record);
+    
+    record.* = Record{
         .hostname = new_hostname,
         .expire_at = std.math.maxInt(i64),
         .state = .{
@@ -69,9 +104,8 @@ pub fn create_new_record(self: *Cache, hostname: []const u8, control_data: *Reso
         }
     };
 
-    const new_node = try self.records_list.create_new_node(new_record);
-    self.records_list.append_node(new_node);
-    return &new_node.data;
+    try self.cache.put(new_hostname, record);
+    return record;
 }
 
 pub fn create_new_record_from_resolved(
@@ -89,7 +123,10 @@ pub fn create_new_record_from_resolved(
         expire_at = std.time.timestamp() + @as(i64, @intCast(ttl));
     }
 
-    const new_record = Record{
+    const record = try allocator.create(Record);
+    errdefer allocator.destroy(record);
+
+    record.* = Record{
         .hostname = new_hostname,
         .expire_at = expire_at,
         .state = .{
@@ -97,42 +134,20 @@ pub fn create_new_record_from_resolved(
         }
     };
 
-    const new_node = try self.records_list.create_new_node(new_record);
-    self.records_list.append_node(new_node);
-    return &new_node.data;
+    try self.cache.put(new_hostname, record);
+    return record;
 }
 
 pub fn get(self: *Cache, hostname: []const u8) ?*Record {
     const current_time = std.time.timestamp();
 
-    const allocator = self.allocator;
-    var node = self.records_list.first;
-    while (node) |n| {
-        node = n.next;
-
-        const data = &n.data;
-        if (data.expire_at < current_time) {
-            switch (data.state) {
-                .resolved => |v| allocator.free(v),
-                .none => {}, // When it is none, `expire_at` must be 0
-
-                // At this point the hostname should be resolved. Also when it is pending state,
-                // `expire_at` is MAX_I64
-                .pending => unreachable
-            }
-
-            allocator.free(data.hostname);
-
-            self.records_list.unlink_node(n);
-            self.records_list.release_node(n);
-            continue;
+    if (self.cache.get(hostname)) |record| {
+        if (record.expire_at < current_time) {
+            // Expired.
+            _ = self.cache.remove(hostname);
+            return null;
         }
-
-        if (!std.mem.eql(u8, hostname, data.hostname)) {
-            continue;
-        }
-
-        return data;
+        return record;
     }
 
     return null;
@@ -143,25 +158,9 @@ const Cache = @This();
 const testing = std.testing;
 
 test "create_new_record" {
-    var cache = Cache{
-        .allocator = testing.allocator,
-        .records_list = undefined,
-    };
+    var cache: Cache = undefined;
     cache.init(testing.allocator);
-    defer {
-        var node = cache.records_list.first;
-        while (node) |n| {
-            node = n.next;
-            testing.allocator.free(n.data.hostname);
-            switch (n.data.state) {
-                .resolved => |d| {
-                    testing.allocator.free(d);
-                },
-                else => {}
-            }
-            cache.records_list.release_node(n);
-        }
-    }
+    defer cache.deinit();
 
     const record = try cache.create_new_record("example.com", undefined);
 
@@ -171,25 +170,9 @@ test "create_new_record" {
 }
 
 test "set_resolved_data" {
-    var cache = Cache{
-        .allocator = testing.allocator,
-        .records_list = undefined,
-    };
+    var cache: Cache = undefined;
     cache.init(testing.allocator);
-    defer {
-        var node = cache.records_list.first;
-        while (node) |n| {
-            node = n.next;
-            testing.allocator.free(n.data.hostname);
-            switch (n.data.state) {
-                .resolved => |d| {
-                    testing.allocator.free(d);
-                },
-                else => {}
-            }
-            cache.records_list.release_node(n);
-        }
-    }
+    defer cache.deinit();
 
     const record = try cache.create_new_record("example.com", undefined);
 
@@ -207,25 +190,9 @@ test "set_resolved_data" {
 }
 
 test "get record from cache" {
-    var cache = Cache{
-        .allocator = testing.allocator,
-        .records_list = undefined,
-    };
+    var cache: Cache = undefined;
     cache.init(testing.allocator);
-    defer {
-        var node = cache.records_list.first;
-        while (node) |n| {
-            node = n.next;
-            testing.allocator.free(n.data.hostname);
-            switch (n.data.state) {
-                .resolved => |d| {
-                    testing.allocator.free(d);
-                },
-                else => {}
-            }
-            cache.records_list.release_node(n);
-        }
-    }
+    defer cache.deinit();
 
     const record = try cache.create_new_record("example.com", undefined);
 
@@ -242,25 +209,9 @@ test "get record from cache" {
 }
 
 test "get expired record" {
-    var cache = Cache{
-        .allocator = testing.allocator,
-        .records_list = undefined,
-    };
+    var cache: Cache = undefined;
     cache.init(testing.allocator);
-    defer {
-        var node = cache.records_list.first;
-        while (node) |n| {
-            node = n.next;
-            testing.allocator.free(n.data.hostname);
-            switch (n.data.state) {
-                .resolved => |d| {
-                    testing.allocator.free(d);
-                },
-                else => {}
-            }
-            cache.records_list.release_node(n);
-        }
-    }
+    defer cache.deinit();
 
     const record = try cache.create_new_record("example.com", undefined);
 
