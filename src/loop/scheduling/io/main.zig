@@ -24,6 +24,7 @@ pub const BlockingOperation = enum {
     PerformRead,
     PerformWrite,
     PerformWriteV,
+    PerformRecvMsg,
     WaitTimer,
     Cancel,
     SocketShutdown,
@@ -86,7 +87,7 @@ pub const BlockingTask = struct {
                     }
                 }
             },
-            .PerformRead => {
+            .PerformRead, .PerformRecvMsg => {
                 switch (result) {
                     .SUCCESS => {},
                     .CANCELED, .BADF, .BADMSG, .INTR, .INVAL, .IO, .ISDIR,
@@ -264,6 +265,7 @@ pub const BlockingOperationData = union(BlockingOperation) {
     PerformRead: Read.PerformData,
     PerformWrite: Write.PerformData,
     PerformWriteV: Write.PerformVData,
+    PerformRecvMsg: Read.RecvMsgData,
     WaitTimer: Timer.WaitData,
     Cancel: usize,
     SocketShutdown: Socket.ShutdownData,
@@ -380,6 +382,7 @@ pub fn queue(self: *IO, event: BlockingOperationData) !usize {
         .PerformRead => |data| try Read.perform(&self.ring, set, data),
         .PerformWrite => |data| try Write.perform(&self.ring, set, data),
         .PerformWriteV => |data| try Write.perform_with_iovecs(&self.ring, set, data),
+        .PerformRecvMsg => |data| try Read.recvmsg(&self.ring, set, data),
         .WaitTimer => |data| try Timer.wait(&self.ring, set, data),
         .SocketShutdown => |data| try Socket.shutdown(&self.ring, set, data),
         .Cancel => |data| try Cancel.perform(&self.ring, data),
