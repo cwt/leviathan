@@ -24,6 +24,8 @@ pub fn init_module(_: std.mem.Allocator) void {}
 
 allocator: std.mem.Allocator,
 
+fs_watcher: FSWatcher,
+
 ready_tasks_queue_index: u8 = 0,
 
 ready_tasks_queues: [2]CallbackManager.CallbacksSetsQueue,
@@ -78,10 +80,12 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
         .prepare_hooks = HooksList.init(allocator),
         .check_hooks = HooksList.init(allocator),
         .idle_hooks = HooksList.init(allocator),
+        .fs_watcher = undefined,
         .unix_signals = undefined,
         .io = undefined,
         .dns = undefined,
     };
+    try self.fs_watcher.init(self);
 
     try self.io.init(self, allocator);
     errdefer self.io.deinit();
@@ -98,10 +102,13 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
 }
 
 pub fn release(self: *Loop) void {
+    if (!self.initialized) return;
     if (self.running) {
         @panic("Loop is running, can't be deallocated");
     }
+    self.initialized = false;
 
+    self.fs_watcher.deinit();
     self.io.deinit();
     self.unix_signals.deinit();
 
@@ -129,7 +136,6 @@ pub fn release(self: *Loop) void {
     self.idle_hooks.clear();
 
     self.dns.deinit();
-    self.initialized = false;
 }
 
 pub inline fn reserve_slots(self: *Loop, amount: usize) !void {
@@ -170,6 +176,7 @@ pub const Scheduling = @import("scheduling/main.zig");
 pub const UnixSignals = @import("unix_signals.zig");
 pub const Python = @import("python/main.zig");
 pub const DNS = @import("dns/main.zig");
+pub const FSWatcher = @import("fs_watcher.zig");
 
 test {
     _ = Runner;

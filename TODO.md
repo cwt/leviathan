@@ -192,9 +192,10 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 | 3.1 | `EventLoopPolicy` / `install()` | S | ✅ DONE |
 | 3.2 | Debug mode | M | ✅ DONE |
 | 3.3 | Missing loop methods (`sock_*`, `set_task_factory`) | S–M | ✅ DONE |
-| 3.4 | Idle/Check handles + stream write deferral | S | — |
-| 3.5 | FS Event watcher (inotify) | S | — |
+| 3.4 | Idle/Check handles + stream write deferral | S | ✅ DONE |
+| 3.5 | FS Event watcher (inotify) | S | ✅ DONE |
 | 3.6 | Child watcher | S | — |
+
 | 3.7 | PseudoSocket | S | — |
 | 3.8 | LRU cache | S | — |
 | 3.9 | Connection lost deferred scheduling | S | — |

@@ -1,3 +1,4 @@
+const std = @import("std");
 const python_c = @import("python_c");
 const PyObject = *python_c.PyObject;
 
@@ -190,6 +191,72 @@ fn z_loop_add_hook(self: *LoopObject, args: []const ?PyObject) !PyObject {
         .cleanup = null,
         .data = .{ .user_data = handle, .exception_context = null },
     });
+
+    return @ptrCast(handle);
+}
+
+const PathWatcherHandle = extern struct {
+    ob_base: python_c.PyObject,
+    loop_data: *Loop,
+    wd: i32,
+    callback: PyObject,
+};
+
+fn path_watcher_handle_dealloc(self: ?*PathWatcherHandle) callconv(.c) void {
+    const instance = self.?;
+    python_c.py_decref(instance.callback);
+    const @"type": *python_c.PyTypeObject = python_c.get_type(@ptrCast(instance));
+    @"type".tp_free.?(@ptrCast(instance));
+}
+
+fn path_watcher_handle_cancel(self: ?*PathWatcherHandle, _: ?PyObject) callconv(.c) ?PyObject {
+    const instance = self.?;
+    if (instance.loop_data.initialized) {
+        instance.loop_data.fs_watcher.remove_watch(instance.wd, instance.callback);
+    }
+    return python_c.get_py_none();
+}
+
+const PathWatcherHandleMethods = [_]python_c.PyMethodDef{
+    .{ .ml_name = "cancel\x00", .ml_meth = @ptrCast(&path_watcher_handle_cancel), .ml_flags = python_c.METH_NOARGS, .ml_doc = "Cancel the path watcher\x00" },
+    .{ .ml_name = null, .ml_meth = null, .ml_flags = 0, .ml_doc = null }
+};
+
+var PathWatcherHandleType = python_c.PyTypeObject{
+    .tp_name = "leviathan._PathWatcherHandle\x00",
+    .tp_basicsize = @sizeOf(PathWatcherHandle),
+    .tp_flags = python_c.Py_TPFLAGS_DEFAULT,
+    .tp_dealloc = @ptrCast(&path_watcher_handle_dealloc),
+    .tp_methods = @constCast(&PathWatcherHandleMethods),
+};
+
+pub fn loop_add_path_watcher(self: ?*LoopObject, args: ?[*]const ?PyObject, nargs: python_c.Py_ssize_t) callconv(.c) ?PyObject {
+    return utils.execute_zig_function(z_loop_add_path_watcher, .{ self.?, args.?[0..@as(usize, @intCast(nargs))] });
+}
+
+fn z_loop_add_path_watcher(self: *LoopObject, args: []const ?PyObject) !PyObject {
+    if (args.len < 3) return error.PythonError;
+    const py_path = args[0].?;
+    const py_mask = args[1].?;
+    const py_callback = args[2].?;
+
+    const mask: u32 = @intCast(python_c.PyLong_AsUnsignedLong(py_mask));
+    
+    var path_buf: [4096]u8 = undefined;
+    const path_len = python_c.PyUnicode_AsUTF8AndSize(py_path, null);
+    if (path_len < 0) return error.PythonError;
+    const path_str = python_c.PyUnicode_AsUTF8(py_path) orelse return error.PythonError;
+    
+    const path_z = try std.fmt.bufPrintZ(&path_buf, "{s}", .{std.mem.span(path_str)});
+
+    const loop_data = utils.get_data_ptr(Loop, self);
+    const wd = try loop_data.fs_watcher.add_watch(path_z, mask, py_callback);
+
+    if (python_c.PyType_Ready(&PathWatcherHandleType) < 0) return error.PythonError;
+    const handle: *PathWatcherHandle = @ptrCast(PathWatcherHandleType.tp_alloc.?(&PathWatcherHandleType, 0) orelse return error.PythonError);
+    handle.loop_data = loop_data;
+    handle.wd = wd;
+    handle.callback = python_c.py_newref(py_callback);
 
     return @ptrCast(handle);
 }

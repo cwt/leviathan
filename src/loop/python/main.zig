@@ -78,6 +78,12 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Add a loop hook (internal use only).\x00",
         .ml_flags = python_c.METH_FASTCALL
     },
+    python_c.PyMethodDef{
+        .ml_name = "_add_path_watcher\x00",
+        .ml_meth = @ptrCast(&Control.loop_add_path_watcher),
+        .ml_doc = "Add a path watcher (internal use only).\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
 
     // --------------------- Sheduling ---------------------
     python_c.PyMethodDef{
@@ -307,7 +313,7 @@ const LoopMembers: []const python_c.PyMemberDef = &[_]python_c.PyMemberDef{
 
 pub const LoopObject = extern struct {
     ob_base: python_c.PyObject,
-    data: [@sizeOf(Loop)]u8,
+    data: [@sizeOf(Loop)]u8 align(@alignOf(Loop)),
 
     asyncgens_set: ?PyObject,
     asyncgens_set_add: ?PyObject,

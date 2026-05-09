@@ -95,6 +95,7 @@ pub const PyBool_FromLong = _c.PyBool_FromLong;
 pub extern var PyBool_Type: PyTypeObject;
 pub const PyBytes_FromStringAndSize = _c.PyBytes_FromStringAndSize;
 pub const PyLong_FromLong = _c.PyLong_FromLong;
+pub const PyLong_FromUnsignedLong = _c.PyLong_FromUnsignedLong;
 pub const PyLong_FromUnsignedLongLong = _c.PyLong_FromUnsignedLongLong;
 pub const PyLong_AsInt = _c.PyLong_AsInt;
 pub const PyLong_AsLong = _c.PyLong_AsLong;
