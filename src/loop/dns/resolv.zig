@@ -210,7 +210,7 @@ fn check_send_operation_result(data: *const CallbackManager.CallbackData) !void 
             },
         };
     } else {
-        unreachable; // Just in case hahah
+        unreachable;
     }
 
     _ = try server_data.loop.io.queue(operation_data);
@@ -236,35 +236,39 @@ fn parse_individual_dns_result(data: []const u8, result: *std.net.Address, new_r
         }
     }
 
-    if ((offset + @sizeOf(ResultHeader)) >= data.len) return null;
+    if ((offset + 10) > data.len) return null;
 
-    const result_header: *const ResultHeader = @alignCast(@ptrCast(data.ptr + offset));
-    offset += @sizeOf(ResultHeader);
-
-    const r_type = std.mem.bigToNative(u16, result_header.type);
-    const r_class = std.mem.bigToNative(u16, result_header.class);
+    const r_type = std.mem.readInt(u16, data[offset .. offset + 2][0..2], .big);
+    const r_class = std.mem.readInt(u16, data[offset + 2 .. offset + 4][0..2], .big);
+    const r_ttl = std.mem.readInt(u32, data[offset + 4 .. offset + 8][0..4], .big);
+    const r_data_len = std.mem.readInt(u16, data[offset + 8 .. offset + 10][0..2], .big);
+    offset += 10;
 
     if (r_class == 1) {
         switch (r_type) {
             1 => {
+                if (offset + 4 > data.len) return null;
                 var addr: [4]u8 = undefined;
                 @memcpy(&addr, data[offset..(offset + 4)]);
                 result.* = std.net.Address.initIp4(addr, 0);
                 new_result.* = true;
-                ttl.* = std.mem.bigToNative(u32, result_header.ttl);
+                ttl.* = r_ttl;
             },
             28 => {
+                if (offset + 16 > data.len) return null;
                 var addr: [16]u8 = undefined;
                 @memcpy(&addr, data[offset..(offset + 16)]);
                 result.* = std.net.Address.initIp6(addr, 0, 0, 0);
                 new_result.* = true;
-                ttl.* = std.mem.bigToNative(u32, result_header.ttl);
+                ttl.* = r_ttl;
             },
             else => {},
         }
     }
 
-    return offset + @as(usize, @intCast(std.mem.bigToNative(u16, result_header.data_len)));
+    const final_offset = offset + @as(usize, @intCast(r_data_len));
+    if (final_offset > data.len) return null;
+    return final_offset;
 }
 
 fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
@@ -297,33 +301,39 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
     }
 
     loop: switch (state) {
-        .process_header => while (hostnames_processed < hostnames_len) {
-            const diff = (data_received - offset);
-            if (diff < @sizeOf(Header)) {
-                break;
+        .process_header => {
+            if (data_received - offset >= 12) {
+                const results_len = std.mem.readInt(u16, response[offset + 6 .. offset + 8][0..2], .big);
+                offset += 12;
+
+                if (results_len == 0) {
+                    hostnames_processed = hostnames_len;
+                } else {
+                    // Skip query domain with bounds check
+                    while (offset < data_received) {
+                        const byte = response[offset];
+                        if (byte == 0) {
+                            offset += 1;
+                            break;
+                        }
+                        if (byte & 0xC0 == 0xC0) {
+                            // Compression pointer: 2 bytes
+                            if (offset + 2 > data_received) break;
+                            offset += 2;
+                            break;
+                        }
+                        const next_offset = offset + 1 + byte;
+                        if (next_offset > data_received) break;
+                        offset = next_offset;
+                    }
+
+                    if (offset + 5 <= data_received) {
+                        offset += 5;
+                        results_to_process = results_len;
+                        continue :loop ResponseProcessingState.process_body;
+                    }
+                }
             }
-
-            const header: *const Header = @alignCast(@ptrCast(response.ptr + offset));
-            const results_len: u16 = std.mem.bigToNative(u16, header.ancount);
-            offset += @sizeOf(Header);
-
-            // Check if there aren't results
-            if (results_len == 0) {
-                hostnames_processed += 1;
-                continue;
-            }
-
-            // Skip query domain
-            while (true) {
-                const length = response[offset];
-                if (length == 0) break;
-
-                offset += @intCast(length + 1);
-            }
-
-            offset += 5; // Skip some stuffs
-            results_to_process = results_len;
-            continue :loop ResponseProcessingState.process_body;
         },
         .process_body => while (results_to_process > 0) {
             var result: std.net.Address = undefined;
@@ -337,7 +347,7 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
                 &ttl,
             ) orelse break;
 
-            offset = new_offset;
+            offset += new_offset;
             if (new_result) {
                 try server_data.results.append(server_data.control_data.arena.allocator(), result);
                 server_data.min_ttl = @min(server_data.min_ttl, ttl);
@@ -350,38 +360,17 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
     server_data.hostnames_array.processed = hostnames_processed;
     server_data.results_to_process = results_to_process;
 
-    if (hostnames_processed == hostnames_len) {
-        server_data.release();
-    } else if (results_to_process > 0 or server_data.results.items.len == 0) {
-        _ = try server_data.loop.io.queue(
-            .{
-                .PerformRead = .{
-                    .data = .{
-                        .buffer = response[offset..],
-                    },
-                    .fd = server_data.socket_fd,
-                    .zero_copy = true,
-                    .callback = .{
-                        .func = &process_dns_response,
-                        .cleanup = &cleanup_server_query_data,
-                        .data = .{
-                            .user_data = server_data,
-                            .exception_context = null,
-                        },
-                    },
-                    .timeout = DEFAULT_TIMEOUT,
-                },
-            },
-        );
-    } else {
+    if (server_data.results.items.len > 0) {
         try mark_resolved_and_execute_user_callbacks(server_data);
+    } else {
+        server_data.release();
     }
 }
 
 fn build_query(id: u16, payload: []u8, question: QuestionType, hostname: []const u8) usize {
     std.mem.writeInt(u16, payload[0..2], id, .big);
-    std.mem.writeInt(u16, payload[2..4], std.mem.nativeToBig(u16, 0x0100), .big);
-    std.mem.writeInt(u16, payload[4..6], std.mem.nativeToBig(u16, 1), .big);
+    std.mem.writeInt(u16, payload[2..4], 0x0100, .big);
+    std.mem.writeInt(u16, payload[4..6], 1, .big);
     std.mem.writeInt(u16, payload[6..8], 0, .big);
     std.mem.writeInt(u16, payload[8..10], 0, .big);
     std.mem.writeInt(u16, payload[10..12], 0, .big);
@@ -398,8 +387,8 @@ fn build_query(id: u16, payload: []u8, question: QuestionType, hostname: []const
     payload[offset] = 0;
     offset += 1;
 
-    std.mem.writeInt(u16, payload[offset .. offset + 2][0..2], std.mem.nativeToBig(u16, @intFromEnum(question)), .big);
-    std.mem.writeInt(u16, payload[offset + 2 .. offset + 4][0..2], std.mem.nativeToBig(u16, 1), .big);
+    std.mem.writeInt(u16, payload[offset .. offset + 2][0..2], @intFromEnum(question), .big);
+    std.mem.writeInt(u16, payload[offset + 2 .. offset + 4][0..2], 1, .big);
     offset += 4;
 
     return offset;
@@ -477,14 +466,16 @@ fn get_hostname_array(allocator: std.mem.Allocator, hostname: []const u8, suffix
     errdefer allocator.free(hostnames_array.array);
 
     if (std.mem.indexOfScalar(u8, hostname, '.')) |_| {
+        // FQDN: only try the hostname itself, no search suffixes
         if (build_hostname(&hostnames_array.array[hostnames_array.len], hostname, &.{})) {
             hostnames_array.len += 1;
         }
-    }
-
-    for (suffixes) |suffix| {
-        if (build_hostname(&hostnames_array.array[hostnames_array.len], hostname, suffix)) {
-            hostnames_array.len += 1;
+    } else {
+        // Non-FQDN: try with each search suffix
+        for (suffixes) |suffix| {
+            if (build_hostname(&hostnames_array.array[hostnames_array.len], hostname, suffix)) {
+                hostnames_array.len += 1;
+            }
         }
     }
 

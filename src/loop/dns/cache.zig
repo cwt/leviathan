@@ -74,6 +74,34 @@ pub fn create_new_record(self: *Cache, hostname: []const u8, control_data: *Reso
     return &new_node.data;
 }
 
+pub fn create_new_record_from_resolved(
+    self: *Cache,
+    hostname: []const u8,
+    address_list: []std.net.Address,
+    ttl: u32,
+) !*Record {
+    const allocator = self.allocator;
+    const new_hostname = try allocator.dupe(u8, hostname);
+    errdefer allocator.free(new_hostname);
+
+    var expire_at: i64 = std.math.maxInt(i64);
+    if (ttl < std.math.maxInt(u32)) {
+        expire_at = std.time.timestamp() + @as(i64, @intCast(ttl));
+    }
+
+    const new_record = Record{
+        .hostname = new_hostname,
+        .expire_at = expire_at,
+        .state = .{
+            .resolved = address_list
+        }
+    };
+
+    const new_node = try self.records_list.create_new_node(new_record);
+    self.records_list.append_node(new_node);
+    return &new_node.data;
+}
+
 pub fn get(self: *Cache, hostname: []const u8) ?*Record {
     const current_time = std.time.timestamp();
 

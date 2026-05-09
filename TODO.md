@@ -92,8 +92,16 @@ Future returned immediately; DNS resolution happens async. Works with `localhost
 - **`Cache.allocator` field never initialized**: `Cache.init()` didn't set `self.allocator = allocator`, causing garbage allocator used in `prepare_data` → segfault. Fixed.
 - **`packed struct` alignment panic in `build_query`**: Zig 0.15.2 `packed struct` has alignment equal to its backing integer, not 1. `@alignCast(@ptrCast(payload.ptr + offset))` panicked when offset wasn't aligned. Rewrote to use `std.mem.writeInt()` for byte-level writes. Fixed.
 - **`test_create_server_unresolvable_host` restored**: Now passes with `RuntimeError: InvalidHostname` for invalid hostnames.
+- **`parse_individual_dns_result` relative offset bug**: Function returned relative offset but caller treated it as absolute. Fixed with `offset += new_offset`.
+- **DNS response bounds check**: Added check for `r_data_len` exceeding buffer to prevent out-of-bounds parsing.
+- **Query domain compression pointer**: Added handling for DNS compression pointers (0xC0) when skipping query domain in response.
+- **FQDN search suffix bug**: Code was appending search suffixes to FQDNs (hostnames with dots). Fixed to only add suffixes for non-FQDNs.
+- **Resolved callback not triggered**: When all hostnames processed with results, code called `release()` (cancellation) instead of `mark_resolved_and_execute_user_callbacks()`. Fixed.
+- **io_uring UDP incompatibility**: io_uring `read`/`recv`/`recvmsg`/`poll_add` don't work on UDP sockets on kernel 6.19.14. Fixed by switching DNS resolver to use Python's `socket.getaddrinfo` via C API for external hostnames. Localhost/IP fast path still uses Zig.
 
-**Remaining:** DNS timeout for unresolvable external hostnames (e.g., `non-existent.example.com`) hangs because systemd-resolved (127.0.0.53) doesn't respond to raw UDP DNS queries. The io_uring 5-second timeout should fire but appears not to. This is a separate io_uring timeout issue, not a segfault.
+**Remaining issues:**
+- `create_server` with external hostnames fails with `AddressNotAvailable` (expected - can't bind to public IPs).
+- DNS response parsing still needs verification with various DNS response formats (EDNS0, DNSSEC, etc.).
 
 ### 2. Hardcoded IPv4 / Lack of DNS in Datagram
 `create_datagram_endpoint` manually splits host strings on `.` and hardcodes `AF_INET`. It lacks async DNS resolution and IPv6 support.
@@ -240,6 +248,14 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 ### Known Issues
 
 None — all identified bugs are fixed.
+
+### Free-Threading Atomic Symbol Fix (2026-05-09)
+
+**Problem:** `leviathan_zig.so` had undefined symbol `_Py_atomic_load_uint64_relaxed` on free-threading builds (3.13t, 3.14t).
+
+**Root Cause:** Zig's `@cImport` doesn't properly inline `static inline` functions from CPython headers. When `Py_GIL_DISABLED` is defined, `cpython/pyatomic.h` declares `_Py_atomic_load_uint64_relaxed` as `static inline` with a GCC builtin implementation, but Zig's C translation treats it as an external symbol instead of inlining it.
+
+**Fix:** Added `src/pyatomic_stubs.c` with stub implementations using `__atomic_load_n` GCC builtins, compiled into the library when `python_is_gil_disabled` is true.
 
 ---
 

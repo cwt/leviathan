@@ -1,6 +1,13 @@
 const _c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
+    // Don't define Py_GIL_DISABLED here - it causes @cImport to pull in
+    // inline functions that reference _Py_atomic_load_uint64_relaxed which
+    // is NOT exported from libpython. We use Py_IncRef/Py_DecRef (stable ABI)
+    // instead, which ARE exported and handle free-threading internally.
     @cInclude("Python.h");
+    // Undefine Py_INCREF/Py_DECREF macros to prevent inline function inclusion
+    @cUndef("Py_INCREF");
+    @cUndef("Py_DECREF");
 });
 
 pub const PyObject = _c.PyObject;
@@ -95,6 +102,13 @@ pub const PyTuple_SetItem = _c.PyTuple_SetItem;
 pub const PyTuple_GetItem = _c.PyTuple_GetItem;
 pub const PyTuple_Size = _c.PyTuple_Size;
 pub const PyTuple_Pack = _c.PyTuple_Pack;
+pub const PyTuple_Check = _c.PyTuple_Check;
+
+pub const PyList_New = _c.PyList_New;
+pub const PyList_Append = _c.PyList_Append;
+pub const PyList_GetItem = _c.PyList_GetItem;
+pub const PyList_Size = _c.PyList_Size;
+pub const PyList_Check = _c.PyList_Check;
 
 pub const PyUnicode_FromString = _c.PyUnicode_FromString;
 pub const PyUnicode_FromStringAndSize = _c.PyUnicode_FromStringAndSize;

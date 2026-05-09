@@ -48,15 +48,8 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
                     msghr.iov = @constCast(iovecs.ptr);
                     msghr.iovlen = @intCast(iovecs.len);
                 },
-                .buffer => |buffer| {
-                    const iovecs: [1]std.posix.iovec = .{
-                        std.posix.iovec{
-                            .base = buffer.ptr,
-                            .len = buffer.len
-                        }
-                    };
-                    msghr.iov = @constCast(&iovecs);
-                    msghr.iovlen = 1;
+                .buffer => {
+                    break :blk try ring.read(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
                 }
             }
 
