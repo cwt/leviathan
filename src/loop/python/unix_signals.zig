@@ -20,7 +20,7 @@ inline fn z_loop_add_signal_handler(
     const loop_data = utils.get_data_ptr(Loop, self);
 
     const py_sig: PyObject = args[0].?;
-    if (python_c.long_check(py_sig)) {
+    if (!python_c.long_check(py_sig)) {
         python_c.raise_python_runtime_error("Invalid signal\x00");
         return error.PythonError;
     }
@@ -99,7 +99,7 @@ pub fn loop_add_signal_handler(
 pub fn loop_remove_signal_handler(
     self: ?*LoopObject, py_sig: ?PyObject
 ) callconv(.c) ?PyObject {
-    if (python_c.long_check(py_sig.?)) {
+    if (!python_c.long_check(py_sig.?)) {
         python_c.raise_python_type_error("Invalid signal\x00");
         return null;
     }

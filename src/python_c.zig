@@ -270,7 +270,7 @@ inline fn type_hasfeature(arg_type: *Python.PyTypeObject, arg_feature: c_ulong) 
             break :blk @atomicLoad(c_ulong, &arg_type.tp_flags, .unordered);
         }
     };
-    return (flags & arg_feature) == 0;
+    return (flags & arg_feature) != 0;
 }
 
 pub inline fn long_check(obj: *Python.PyObject) bool {

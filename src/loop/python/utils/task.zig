@@ -45,7 +45,7 @@ inline fn z_loop_create_task(
         if (python_c.is_none(v)) {
             python_c.py_decref(v);
             name = null;
-        }else if (python_c.unicode_check(v)) {
+        }else if (!python_c.unicode_check(v)) {
             python_c.raise_python_type_error("name must be a string\x00");
             return error.PythonError;
         }

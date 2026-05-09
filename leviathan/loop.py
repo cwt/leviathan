@@ -433,12 +433,13 @@ class Loop(_Loop):
             kwargs["reuse_address"] = reuse_address
         if reuse_port is not None:
             kwargs["reuse_port"] = reuse_port
-        srv = await _Loop.create_server(
+        srvs = await _Loop.create_server(
             self, protocol_factory, host, port, backlog=backlog, **kwargs,
         )
-        server = Server(self, [srv])
-        if hasattr(srv, 'server_ref'):
-            srv.server_ref = server
+        server = Server(self, srvs)
+        for srv in srvs:
+            if hasattr(srv, 'server_ref'):
+                srv.server_ref = server
         return server
 
     async def _create_ssl_server(
@@ -524,12 +525,13 @@ class Loop(_Loop):
             kwargs["reuse_address"] = reuse_address
         if reuse_port is not None:
             kwargs["reuse_port"] = reuse_port
-        srv = await _Loop.create_server(
+        srvs = await _Loop.create_server(
             self, SSP, host, port, backlog=backlog, **kwargs,
         )
-        server = Server(self, [srv])
-        if hasattr(srv, 'server_ref'):
-            srv.server_ref = server
+        server = Server(self, srvs)
+        for srv in srvs:
+            if hasattr(srv, 'server_ref'):
+                srv.server_ref = server
         return server
 
     async def create_unix_connection(

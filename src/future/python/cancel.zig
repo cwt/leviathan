@@ -14,10 +14,10 @@ pub inline fn future_fast_cancel(instance: *PythonFutureObject, data: *Future, c
 
     if (cancel_msg_py_object) |pyobj| {
         python_c.py_xdecref(instance.cancel_msg_py_object);
-        if (python_c.unicode_check(pyobj)) {
+        if (!python_c.unicode_check(pyobj)) {
             instance.cancel_msg_py_object = python_c.PyObject_Str(pyobj) orelse return error.PythonError;
         }else{
-            instance.cancel_msg_py_object = pyobj;
+            instance.cancel_msg_py_object = python_c.py_newref(pyobj);
         }
     }
 

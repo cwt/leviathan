@@ -75,7 +75,9 @@ fn create_new_py_exception_and_add_event(
 
     const exception = python_c.PyObject_CallOneArg(python_c.PyExc_RuntimeError, py_message)
         orelse return error.PythonError;
-    errdefer python_c.py_decref(exception);
+    
+    python_c.py_xdecref(task.exception);
+    task.exception = exception;
 
     const callback: CallbackManager.Callback = .{
         .func = &execute_task_throw,

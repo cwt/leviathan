@@ -18,6 +18,7 @@ pub const StreamServerObject = extern struct {
     loop: ?PyObject,
     protocol_factory: ?PyObject,
     server_fd: std.posix.fd_t,
+    family: c_int,
     backlog: c_int,
     blocking_task_id: usize,
     closed: bool,
@@ -52,7 +53,7 @@ fn streamserver_clear(self: ?*StreamServerObject) callconv(.c) c_int {
 
 fn z_streamserver_init(
     self: *StreamServerObject, py_loop: ?PyObject, py_protocol_factory: ?PyObject,
-    py_server_fd: ?PyObject, py_backlog: ?PyObject
+    py_server_fd: ?PyObject, py_family: ?PyObject, py_backlog: ?PyObject
 ) !c_int {
     if (python_c.PyCallable_Check(py_protocol_factory.?) <= 0) {
         python_c.raise_python_type_error("protocol_factory must be callable\x00");
@@ -65,6 +66,8 @@ fn z_streamserver_init(
         return error.PythonError;
     }
 
+    const family = if (py_family) |f| @as(c_int, @intCast(python_c.PyLong_AsLong(f))) else std.posix.AF.INET;
+
     const backlog: c_int = if (py_backlog) |b| blk: {
         break :blk @intCast(python_c.PyLong_AsInt(b));
     } else 100;
@@ -72,6 +75,7 @@ fn z_streamserver_init(
     self.loop = python_c.py_newref(py_loop.?);
     self.protocol_factory = python_c.py_newref(py_protocol_factory.?);
     self.server_fd = @intCast(fd);
+    self.family = family;
     self.backlog = backlog;
     self.blocking_task_id = 0;
     self.closed = false;
@@ -86,24 +90,26 @@ fn streamserver_init(
     var py_loop: ?PyObject = null;
     var py_protocol_factory: ?PyObject = null;
     var py_server_fd: ?PyObject = null;
+    var py_family: ?PyObject = null;
     var py_backlog: ?PyObject = null;
 
-    var kwlist: [5][*c]u8 = undefined;
+    var kwlist: [6][*c]u8 = undefined;
     kwlist[0] = @constCast("loop\x00");
     kwlist[1] = @constCast("protocol_factory\x00");
     kwlist[2] = @constCast("server_fd\x00");
-    kwlist[3] = @constCast("backlog\x00");
-    kwlist[4] = null;
+    kwlist[3] = @constCast("family\x00");
+    kwlist[4] = @constCast("backlog\x00");
+    kwlist[5] = null;
 
     if (python_c.PyArg_ParseTupleAndKeywords(
-        args, kwargs, "OOO|O\x00", @ptrCast(&kwlist),
-        &py_loop, &py_protocol_factory, &py_server_fd, &py_backlog
+        args, kwargs, "OOOO|O\x00", @ptrCast(&kwlist),
+        &py_loop, &py_protocol_factory, &py_server_fd, &py_family, &py_backlog
     ) < 0) {
         return -1;
     }
 
     return utils.execute_zig_function(z_streamserver_init, .{
-        self.?, py_loop, py_protocol_factory, py_server_fd, py_backlog,
+        self.?, py_loop, py_protocol_factory, py_server_fd, py_family, py_backlog,
     });
 }
 
@@ -235,7 +241,7 @@ fn streamserver_get_socket(self: ?*StreamServerObject, _: ?PyObject) callconv(.c
 
     const py_fd = python_c.PyLong_FromLong(@intCast(instance.server_fd)) orelse return null;
     defer python_c.py_decref(py_fd);
-    const family_obj = python_c.PyLong_FromLong(std.posix.AF.INET) orelse return null;
+    const family_obj = python_c.PyLong_FromLong(instance.family) orelse return null;
     defer python_c.py_decref(family_obj);
     const type_obj = python_c.PyLong_FromLong(std.posix.SOCK.STREAM) orelse return null;
     defer python_c.py_decref(type_obj);

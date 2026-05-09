@@ -100,7 +100,7 @@ Future returned immediately; DNS resolution happens async. Works with `localhost
 - **io_uring UDP incompatibility**: io_uring `read`/`recv`/`recvmsg`/`poll_add` don't work on UDP sockets on kernel 6.19.14. Fixed by switching DNS resolver to use Python's `socket.getaddrinfo` via C API for external hostnames. Localhost/IP fast path still uses Zig.
 
 **Remaining issues:**
-- `create_server` with external hostnames fails with `AddressNotAvailable` (expected - can't bind to public IPs).
+- `create_server` fixed to attempt binding to all resolved addresses and properly report `OSError`. Supports multi-socket servers (e.g. IPv4+IPv6 localhost).
 - DNS response parsing fixed and verified with robust `skip_name` and multi-question support. Added 6 Zig unit tests.
 
 ### 2. Hardcoded IPv4 / Lack of DNS in Datagram — ✅ FIXED

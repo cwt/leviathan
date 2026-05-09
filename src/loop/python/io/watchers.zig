@@ -119,7 +119,7 @@ inline fn z_loop_add_watcher(
     const loop_data = utils.get_data_ptr(Loop, self);
 
     const py_fd: PyObject = args[0].?;
-    if (python_c.long_check(py_fd)) {
+    if (!python_c.long_check(py_fd)) {
         python_c.raise_python_runtime_error("Invalid file descriptor\x00");
         return error.PythonError;
     }
@@ -269,7 +269,7 @@ inline fn z_loop_remove_watcher(
     operation: Loop.Scheduling.IO.BlockingOperation
 ) !PyObject {
     if (Loop.Python.check_forked(self)) return error.PythonError;
-    if (python_c.long_check(py_fd)) {
+    if (!python_c.long_check(py_fd)) {
         python_c.raise_python_runtime_error("Invalid file descriptor\x00");
         return error.PythonError;
     }

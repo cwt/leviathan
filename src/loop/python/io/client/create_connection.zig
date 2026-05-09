@@ -246,7 +246,7 @@ fn get_host_slice(data: *SocketCreationData) ![]const u8 {
         return error.PythonError;
     };
 
-    if (python_c.unicode_check(py_host)) {
+    if (!python_c.unicode_check(py_host)) {
         python_c.raise_python_value_error("Host must be a valid string");
         return error.PythonError;
     }

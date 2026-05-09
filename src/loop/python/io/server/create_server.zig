@@ -66,7 +66,7 @@ fn get_host_slice(data: *ServerCreationData) ![]const u8 {
         return error.PythonError;
     };
 
-    if (python_c.unicode_check(py_host)) {
+    if (!python_c.unicode_check(py_host)) {
         python_c.raise_python_value_error("Host must be a valid string\x00");
         return error.PythonError;
     }
@@ -132,10 +132,6 @@ inline fn z_loop_create_server(
     return python_c.py_newref(fut);
 }
 
-fn set_future_exception_and_return(fut: *FutureObject, err: anyerror) !void {
-    try set_future_exception(err, fut);
-}
-
 // -----------------------------------------------------------------
 // STEP 1: Resolve host
 
@@ -176,7 +172,7 @@ fn z_try_resolve_server_host(creation_data: *ServerCreationData) !void {
 
 fn try_resolve_server_host(data: *const CallbackManager.CallbackData) !void {
     const creation_data: *ServerCreationData = @alignCast(@ptrCast(data.user_data.?));
-    errdefer python_c.deinitialize_object_fields(creation_data, &.{});
+    errdefer creation_data.deinit();
 
     if (data.cancelled) {
         python_c.raise_python_runtime_error("Event for server host resolution cancelled\x00");
@@ -254,14 +250,11 @@ fn z_create_server_socket(server_data: *ServerSocketData) !void {
         break :blk 0;
     };
 
-    const family: u32 = blk: {
-        if (creation_data.py_family) |f| {
-            const val = python_c.PyLong_AsInt(f);
-            if (val == -1 and python_c.PyErr_Occurred() != null) return error.PythonError;
-            break :blk @intCast(val);
-        }
-        break :blk @as(u32, @intCast(address_list[0].any.family));
-    };
+    const requested_family: ?i32 = if (creation_data.py_family) |f| blk: {
+        const val = python_c.PyLong_AsLong(f);
+        if (val == -1 and python_c.PyErr_Occurred() != null) return error.PythonError;
+        break :blk @intCast(val);
+    } else null;
 
     const backlog: c_int = blk: {
         if (creation_data.py_backlog) |b| {
@@ -280,53 +273,95 @@ fn z_create_server_socket(server_data: *ServerSocketData) !void {
     else
         false;
 
-    const addr = address_list[0];
-    var addr_with_port = addr;
-    addr_with_port.setPort(port);
+    const servers_list = python_c.PyList_New(0) orelse return error.PythonError;
+    errdefer python_c.py_decref(servers_list);
 
-    const flags: u32 = std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC;
-    const fd = try std.posix.socket(family, flags, std.posix.IPPROTO.TCP);
-    errdefer std.posix.close(fd);
+    var last_err: ?anyerror = null;
 
-    if (reuse_address) {
-        const val: c_int = 1;
-        try std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, std.mem.asBytes(&val));
-    }
-    if (reuse_port) {
-        const val: c_int = 1;
-        try std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, std.mem.asBytes(&val));
-    }
+    for (address_list) |addr| {
+        if (requested_family) |rf| {
+            if (addr.any.family != rf) continue;
+        }
 
-    try std.posix.bind(fd, &addr_with_port.any, addr_with_port.getOsSockLen());
-    errdefer std.posix.close(fd);
+        var addr_with_port = addr;
+        addr_with_port.setPort(port);
 
-    try std.posix.listen(fd, @intCast(backlog));
+        const flags: u32 = std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC;
+        const fd = std.posix.socket(addr_with_port.any.family, flags, std.posix.IPPROTO.TCP) catch |err| {
+            last_err = err;
+            continue;
+        };
+        errdefer std.posix.close(fd);
 
-    const py_fd = python_c.PyLong_FromLong(@intCast(fd)) orelse return error.PythonError;
-    defer python_c.py_decref(py_fd);
+        if (reuse_address) {
+            const val: c_int = 1;
+            std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, std.mem.asBytes(&val)) catch {};
+        }
+        if (reuse_port) {
+            const val: c_int = 1;
+            std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, std.mem.asBytes(&val)) catch {};
+        }
 
-    const py_backlog_obj = python_c.PyLong_FromLong(@intCast(backlog)) orelse return error.PythonError;
-    defer python_c.py_decref(py_backlog_obj);
+        std.posix.bind(fd, &addr_with_port.any, addr_with_port.getOsSockLen()) catch |err| {
+            last_err = err;
+            continue;
+        };
 
-    const protocol_factory = creation_data.protocol_factory.?;
-    const loop_obj = creation_data.loop.?;
+        std.posix.listen(fd, @intCast(backlog)) catch |err| {
+            last_err = err;
+            continue;
+        };
 
-    const server = python_c.PyObject_CallFunction(
-        @as(*python_c.PyObject, @ptrCast(StreamServer.StreamServerType.?)), "OOOi\x00",
-        @as(*python_c.PyObject, @ptrCast(loop_obj)), protocol_factory, py_fd, backlog
-    ) orelse return error.PythonError;
-    errdefer python_c.py_decref(server);
+        const py_fd = python_c.PyLong_FromLong(@intCast(fd)) orelse return error.PythonError;
+        defer python_c.py_decref(py_fd);
 
-    const server_ptr: *StreamServer.StreamServerObject = @ptrCast(server);
+        const py_family_obj = python_c.PyLong_FromLong(@intCast(addr_with_port.any.family)) orelse return error.PythonError;
+        defer python_c.py_decref(py_family_obj);
 
-    StreamServer.start_serving(server_ptr) catch |err| {
+        const py_backlog_obj = python_c.PyLong_FromLong(@intCast(backlog)) orelse return error.PythonError;
+        defer python_c.py_decref(py_backlog_obj);
+
+        const protocol_factory = creation_data.protocol_factory.?;
+        const loop_obj = creation_data.loop.?;
+
+        const server = python_c.PyObject_CallFunction(
+            @as(*python_c.PyObject, @ptrCast(StreamServer.StreamServerType.?)), "OOOOO\x00",
+            @as(*python_c.PyObject, @ptrCast(loop_obj)), protocol_factory, py_fd, py_family_obj, py_backlog_obj
+        ) orelse return error.PythonError;
+        errdefer python_c.py_decref(server);
+
+        const server_ptr: *StreamServer.StreamServerObject = @ptrCast(server);
+
+        StreamServer.start_serving(server_ptr) catch |err| {
+            python_c.py_decref(server);
+            last_err = err;
+            continue;
+        };
+
+        if (python_c.PyList_Append(servers_list, server) != 0) return error.PythonError;
         python_c.py_decref(server);
-        return set_future_exception(err, creation_data.future.?);
-    };
+    }
+
+    if (python_c.PyList_Size(servers_list) == 0) {
+        if (last_err) |err| {
+            if (err == error.AddressNotAvailable) {
+                const exception = python_c.PyObject_CallFunction(
+                    python_c.PyExc_OSError, "is\x00",
+                    @as(c_int, 99), // EADDRNOTAVAIL
+                    "Cannot assign requested address\x00"
+                ) orelse return error.PythonError;
+                python_c.PyErr_SetRaisedException(exception);
+                return error.PythonError;
+            }
+            return err;
+        }
+        python_c.raise_python_runtime_error("Failed to bind to any address\x00");
+        return error.PythonError;
+    }
 
     const future_data = utils.get_data_ptr(Future, creation_data.future.?);
-    Future.Python.Result.future_fast_set_result(future_data, server);
-    python_c.py_decref(server);
+    Future.Python.Result.future_fast_set_result(future_data, servers_list);
+    python_c.py_decref(servers_list);
 }
 
 fn create_server_socket(data: *const CallbackManager.CallbackData) !void {

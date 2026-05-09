@@ -73,7 +73,7 @@ pub inline fn future_fast_set_exception(self: *PythonFutureObject, obj: *Future,
 }
 
 inline fn z_future_set_exception(self: *PythonFutureObject, exception: PyObject) !PyObject {
-    if (python_c.exception_check(exception)) {
+    if (!python_c.exception_check(exception)) {
         python_c.raise_python_type_error("Invalid exception instance\x00");
         return error.PythonError;
     }
