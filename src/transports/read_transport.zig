@@ -89,6 +89,17 @@ pub fn close(self: *ReadTransport) !void {
     self.connection_lost_callback = null;
 }
 
+pub fn force_close(self: *ReadTransport) !void {
+    if (self.closed) return;
+    self.closed = true;
+    self.is_closing = true;
+    self.connection_lost_callback = null;
+
+    if (self.blocking_task_id > 0) {
+        _ = try self.loop.io.queue(.{ .Cancel = self.blocking_task_id });
+    }
+}
+
 pub fn deinit(self: *ReadTransport) void {
     if (!self.initialized) {
         @panic("ReadTransport is not initialized");

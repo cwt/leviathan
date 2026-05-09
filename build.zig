@@ -176,6 +176,12 @@ pub fn build(b: *std.Build) void {
     const run_callback_manager_unit_tests = b.addRunArtifact(callback_manager_unit_tests);
     const run_utils_unit_tests = b.addRunArtifact(utils_unit_tests);
 
+    if (python_lib) |lib| {
+        leviathan_module_unit_tests.addObjectFile(.{ .cwd_relative = lib });
+        callback_manager_unit_tests.addObjectFile(.{ .cwd_relative = lib });
+        utils_unit_tests.addObjectFile(.{ .cwd_relative = lib });
+    }
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_leviathan_module_unit_tests.step);
     test_step.dependOn(&run_callback_manager_unit_tests.step);

@@ -11,16 +11,20 @@ const StreamTransportObject = Stream.StreamTransportObject;
 const WriteTransport = @import("../write_transport.zig");
 
 
+const Lifecyle = @import("lifecycle.zig");
+
+
 pub fn write_operation_completed(
     write_transport: *WriteTransport,
     data_written: usize, remaining_data: usize,
     err: std.os.linux.E
 ) !void {
+    const instance: *StreamTransportObject = @ptrCast(write_transport.parent_transport);
+    defer Lifecyle.maybe_close_fd(instance);
+
     if (err != .SUCCESS or data_written == 0) {
         return;
     }
-
-    const instance: *StreamTransportObject = @ptrCast(write_transport.parent_transport);
 
     if (!instance.is_writing) {
         if (remaining_data <= instance.writing_low_water_mark) {

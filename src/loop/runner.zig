@@ -127,6 +127,21 @@ pub inline fn call_once(
     return callbacks_executed;
 }
 
+fn execute_hooks(hooks: *Loop.HooksList) !void {
+    var node = hooks.first;
+    while (node) |n| {
+        const callback = n.data;
+        try callback.func(&.{
+            .user_data = callback.data.user_data,
+            .exception_context = callback.data.exception_context,
+            .io_uring_res = 0,
+            .io_uring_err = .SUCCESS,
+            .cancelled = false,
+        });
+        node = n.next;
+    }
+}
+
 fn fetch_completed_tasks(
     self: *Loop,
     blocking_ready_tasks: []std.os.linux.io_uring_cqe,
@@ -243,6 +258,8 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
         }
 
         try poll_blocking_events(self, mutex, wait_for_blocking_events, ready_tasks_queue);
+        try execute_hooks(&self.check_hooks);
+
         ready_tasks_queue_index = 1 - ready_tasks_queue_index;
         self.ready_tasks_queue_index = ready_tasks_queue_index;
 
@@ -255,6 +272,8 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
             loop_obj
         );
 
-        wait_for_blocking_events = (callbacks_executed == 0);
+        try execute_hooks(&self.idle_hooks);
+        try execute_hooks(&self.prepare_hooks);
+        wait_for_blocking_events = (callbacks_executed == 0 and self.idle_hooks.len == 0);
     }
 }

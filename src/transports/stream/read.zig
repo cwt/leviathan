@@ -54,6 +54,7 @@ pub inline fn queue_read_operation(
 
 pub fn read_operation_completed(read_transport: *ReadTransport, data: []const u8, err: std.os.linux.E) !void {
     const transport: *StreamTransportObject = @ptrCast(read_transport.parent_transport);
+    defer Lifecyle.maybe_close_fd(transport);
 
     var protocol_buffer = transport.protocol_buffer;
     transport.protocol_buffer = comptime std.mem.zeroes(python_c.Py_buffer);
@@ -66,6 +67,10 @@ pub fn read_operation_completed(read_transport: *ReadTransport, data: []const u8
     // When `read_transport` is closing, data length will be always 0
     const is_closing = read_transport.is_closing;
     if (err != .SUCCESS or is_closing) {
+        if (is_closing) {
+            read_transport.closed = true;
+        }
+
         if (err == .CANCELED) {
             try queue_read_operation(transport, read_transport, transport.protocol_type);
         }

@@ -41,6 +41,10 @@ fd: std.posix.fd_t,
 ready_to_queue_write_op: bool = true,
 zero_copying: bool,
 
+prepare_hook_node: ?Loop.HooksList.Node = null,
+
+writev_count: usize = 0,
+
 blocking_task_id: usize = 0,
 
 is_closing: bool = false,
@@ -93,31 +97,53 @@ pub fn init(
         .zero_copying = zero_copying,
         .initialized = true,
     };
+
+    self.prepare_hook_node = try loop.add_hook(.prepare, .{
+        .func = &flush_buffered_writes,
+        .cleanup = null,
+        .data = .{ .user_data = self, .exception_context = null },
+    });
+}
+
+fn flush_buffered_writes(data: *const CallbackManager.CallbackData) !void {
+    const self: *WriteTransport = @alignCast(@ptrCast(data.user_data.?));
+    if (self.ready_to_queue_write_op and self.buffer_size > 0) {
+        try self.queue_buffers_and_swap();
+    }
 }
 
 pub fn close(self: *WriteTransport) !void {
     if (self.is_closing or self.closed) return;
 
-    const blocking_task_id = self.blocking_task_id;
-    if (blocking_task_id == 0) {
-        self.closed = true;
-        self.is_closing = true;
-        return;
-    }
-
-    _ = try self.loop.io.queue(
-        .{
-            .Cancel = blocking_task_id
-        }
-    );
-
     self.is_closing = true;
     self.connection_lost_callback = null;
+
+    if (self.blocking_task_id == 0 and self.buffer_size == 0) {
+        self.closed = true;
+    }
+}
+
+pub fn force_close(self: *WriteTransport) !void {
+    if (self.closed) return;
+    self.closed = true;
+    self.is_closing = true;
+    self.connection_lost_callback = null;
+
+    if (self.blocking_task_id > 0) {
+        _ = try self.loop.io.queue(.{ .Cancel = self.blocking_task_id });
+    }
 }
 
 pub fn deinit(self: *WriteTransport) void {
     if (!self.initialized) {
         @panic("WriteTransport is not initialized");
+    }
+
+    if (self.loop.initialized) {
+        if (self.prepare_hook_node) |node| {
+            self.loop.remove_hook(.prepare, node);
+            self.prepare_hook_node = null;
+        }
     }
 
     const allocator = self.loop.allocator;
@@ -231,12 +257,16 @@ fn write_operation_completed(data: *const CallbackManager.CallbackData) !void {
     self.busy_py_buffers.clearRetainingCapacity();
     self.busy_buffers.clearRetainingCapacity();
 
+    if (self.is_closing and (self.buffer_size == 0 or io_uring_err == .CANCELED)) {
+        self.closed = true;
+    }
+
     const ret = self.write_completed_callback(self, data_written, remaining_data, io_uring_err);
     if (ret) |_| {
         switch (io_uring_err) {
             .SUCCESS => {
-                if (self.is_closing) {
-                    self.closed = true;
+                if (self.closed) {
+                    // Already set above
                 }else{
                     try self.queue_buffers_and_swap();
                 }
@@ -246,12 +276,12 @@ fn write_operation_completed(data: *const CallbackManager.CallbackData) !void {
             },
             .CANCELED => {
                 python_c.py_decref(parent_transport);
-                self.closed = true;
+                // Already set above
                 return;
             },
             else => {
                 if (self.is_closing) {
-                    self.closed = true;
+                    // Already set above
                     python_c.py_decref(parent_transport);
                     return;
                 }
@@ -327,6 +357,7 @@ pub fn queue_buffers_and_swap(self: *WriteTransport) !void {
     self.busy_buffers_size = buffer_size;
     self.current_iovec_index = 0;
 
+    self.writev_count += 1;
     self.ready_to_queue_write_op = false;
 
     python_c.py_incref(self.parent_transport);
@@ -362,10 +393,6 @@ pub fn append_new_buffer_to_write(self: *WriteTransport, py_object: PyObject) !u
         break :blk self.buffer_size + buffer_len;
     };
     self.buffer_size = new_buffer_size;
-
-    if (self.ready_to_queue_write_op) {
-        try queue_buffers_and_swap(self);
-    }
 
     return new_buffer_size;
 }

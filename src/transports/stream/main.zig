@@ -155,6 +155,7 @@ pub const StreamTransportObject = extern struct {
     protocol_type: ProtocolType,
     is_reading: bool,
     is_writing: bool,
+    is_closing: bool,
     closed: bool,
 };
 

@@ -72,6 +72,12 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Set a task factory.\x00",
         .ml_flags = python_c.METH_O
     },
+    python_c.PyMethodDef{
+        .ml_name = "_add_hook\x00",
+        .ml_meth = @ptrCast(&Control.loop_add_hook),
+        .ml_doc = "Add a loop hook (internal use only).\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
 
     // --------------------- Sheduling ---------------------
     python_c.PyMethodDef{

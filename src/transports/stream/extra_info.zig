@@ -103,6 +103,10 @@ inline fn z_transport_get_extra_info(
                 orelse return error.PythonError;
             self.sockname = python_c.py_newref(result);
         }
+    }else if (std.mem.eql(u8, name, "writev_count")) {
+        const write_transport = utils.get_data_ptr2(@import("../write_transport.zig"), "write_transport", self);
+        result = python_c.PyLong_FromUnsignedLongLong(@intCast(write_transport.writev_count))
+            orelse return error.PythonError;
     }else{
         if (default_value) |v| {
             result = v;
