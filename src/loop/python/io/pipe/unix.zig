@@ -107,16 +107,6 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
     python_c.py_decref(result_tuple);
 }
 
-fn create_unix_sockaddr(path: []const u8) !std.posix.sockaddr.un {
-    if (path.len >= 108) return error.NameTooLong;
-    var sun: std.posix.sockaddr.un = undefined;
-    @memset(std.mem.asBytes(&sun), 0);
-    sun.family = std.posix.AF.UNIX;
-    @memcpy(sun.path[0..path.len], path);
-    sun.path[path.len] = 0;
-    return sun;
-}
-
 inline fn z_loop_create_unix_connection(
     self: *LoopObject, args: []?PyObject, knames: ?PyObject
 ) !*FutureObject {
@@ -138,7 +128,6 @@ inline fn z_loop_create_unix_connection(
 
     const loop_data = utils.get_data_ptr(Loop, self);
     const fut = try Future.Python.Constructors.fast_new_future(self);
-    const path = try get_string_slice(py_path);
 
     const ucd = try loop_data.allocator.create(UnixConnectData);
     errdefer loop_data.allocator.destroy(ucd);
@@ -147,7 +136,7 @@ inline fn z_loop_create_unix_connection(
         .loop = python_c.py_newref(self),
         .protocol_factory = python_c.py_newref(protocol_factory),
         .allocator = loop_data.allocator,
-        .addr = try create_unix_sockaddr(path),
+        .addr = (try utils.Address.from_py_addr(py_path, std.posix.AF.UNIX)).un,
     };
     errdefer {
         python_c.py_decref(@as(PyObject, @ptrCast(ucd.future)));
@@ -208,24 +197,23 @@ inline fn z_loop_create_unix_server(
         python_c.raise_python_type_error("protocol_factory must be callable");
         return error.PythonError;
     }
+const fut = try Future.Python.Constructors.fast_new_future(self);
 
-    const fut = try Future.Python.Constructors.fast_new_future(self);
+const backlog: c_int = if (py_backlog) |b| @intCast(python_c.PyLong_AsInt(b)) else 100;
 
-    const path = try get_string_slice(py_path);
+const fd = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0);
+errdefer std.posix.close(fd);
 
-    const backlog: c_int = if (py_backlog) |b| @intCast(python_c.PyLong_AsInt(b)) else 100;
+const addr = try utils.Address.from_py_addr(py_path, std.posix.AF.UNIX);
 
-    const fd = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0);
-    errdefer std.posix.close(fd);
+// Unlink existing socket file before bind
+std.posix.unlink(std.mem.span(@as([*:0]const u8, @ptrCast(&addr.un.path)))) catch {};
 
-    // Unlink existing socket file before bind
-    std.posix.unlink(path) catch {};
+try std.posix.bind(fd, &addr.any, addr.getOsSockLen());
+errdefer std.posix.close(fd);
 
-    const addr = try create_unix_sockaddr(path);
-    try std.posix.bind(fd, @ptrCast(&addr), @sizeOf(std.posix.sockaddr.un));
-    errdefer std.posix.close(fd);
+try std.posix.listen(fd, @intCast(backlog));
 
-    try std.posix.listen(fd, @intCast(backlog));
 
     // Create server transport
     const py_fd = python_c.PyLong_FromLong(@intCast(fd)) orelse return error.PythonError;
@@ -258,16 +246,4 @@ pub fn loop_create_unix_server(
     return utils.execute_zig_function(
         z_loop_create_unix_server, .{ self.?, args.?[0..@as(usize, @intCast(nargs))], knames },
     );
-}
-
-test "create_unix_sockaddr: basic path" {
-    const path = "/tmp/test.sock";
-    const sun = try create_unix_sockaddr(path);
-    try std.testing.expectEqual(std.posix.AF.UNIX, sun.family);
-    try std.testing.expectEqualStrings(path, std.mem.span(@as([*:0]const u8, @ptrCast(&sun.path))));
-}
-
-test "create_unix_sockaddr: path too long" {
-    const long_path = "a" ** 108;
-    try std.testing.expectError(error.NameTooLong, create_unix_sockaddr(long_path));
 }

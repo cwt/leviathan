@@ -102,8 +102,23 @@ fn read_completed(data: *const CallbackManager.CallbackData) !void {
         const py_data = python_c.PyBytes_FromStringAndSize(rd.buf.ptr, @intCast(nread)) orelse return error.PythonError;
         defer python_c.py_decref(py_data);
         
-        // Format source address
-        const py_addr = (try format_sockaddr(&rd.addr, rd.msg.namelen)) orelse python_c.get_py_none();
+        // Format source address using universal helper
+        const addr = blk: {
+            if (rd.msg.namelen == 0) break :blk null;
+            const storage: *const std.posix.sockaddr.storage = &rd.addr;
+            switch (storage.family) {
+                std.posix.AF.INET => {
+                    const sa: *const std.posix.sockaddr.in = @ptrCast(storage);
+                    break :blk utils.Address.to_py_addr(std.net.Address.initIp4(@as([4]u8, @bitCast(sa.addr)), std.mem.bigToNative(u16, sa.port))) catch null;
+                },
+                std.posix.AF.INET6 => {
+                    const sa: *const std.posix.sockaddr.in6 = @ptrCast(storage);
+                    break :blk utils.Address.to_py_addr(std.net.Address.initIp6(sa.addr, std.mem.bigToNative(u16, sa.port), sa.flowinfo, sa.scope_id)) catch null;
+                },
+                else => break :blk null,
+            }
+        };
+        const py_addr = addr orelse python_c.get_py_none();
         defer python_c.py_decref(py_addr);
 
         const args = python_c.PyTuple_Pack(2, py_data, py_addr) orelse return error.PythonError;
@@ -114,51 +129,4 @@ fn read_completed(data: *const CallbackManager.CallbackData) !void {
 
     // Re-arm read
     try queue_read(self);
-}
-
-fn format_sockaddr(storage: *const std.posix.sockaddr.storage, len: std.posix.socklen_t) !?PyObject {
-    if (len == 0) return null;
-
-    switch (storage.family) {
-        std.posix.AF.INET => {
-            const sa: *const std.posix.sockaddr.in = @ptrCast(storage);
-            var buf: [22]u8 = undefined;
-            const addr = std.net.Address.initIp4(@as([4]u8, @bitCast(sa.addr)), std.mem.bigToNative(u16, sa.port));
-            const addr_str = try std.fmt.bufPrint(&buf, "{any}", .{addr});
-            // Split into host and port
-            const colon_idx = std.mem.lastIndexOfScalar(u8, addr_str, ':') orelse return null;
-            const host = addr_str[0..colon_idx];
-            const port = addr.getPort();
-
-            const py_host = python_c.PyUnicode_FromStringAndSize(host.ptr, @intCast(host.len)) orelse return error.PythonError;
-            defer python_c.py_decref(py_host);
-            const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
-            defer python_c.py_decref(py_port);
-            return python_c.PyTuple_Pack(2, py_host, py_port);
-        },
-        std.posix.AF.INET6 => {
-            const sa: *const std.posix.sockaddr.in6 = @ptrCast(storage);
-            var buf: [64]u8 = undefined;
-            const addr = std.net.Address.initIp6(sa.addr, std.mem.bigToNative(u16, sa.port), sa.flowinfo, sa.scope_id);
-            const addr_str = try std.fmt.bufPrint(&buf, "{any}", .{addr});
-            
-            // IPv6 format from std.fmt is [addr]:port
-            const start = if (addr_str[0] == '[') @as(usize, 1) else @as(usize, 0);
-            const end = std.mem.lastIndexOfScalar(u8, addr_str, ']') orelse addr_str.len;
-            const host = addr_str[start..end];
-            const port = addr.getPort();
-
-            const py_host = python_c.PyUnicode_FromStringAndSize(host.ptr, @intCast(host.len)) orelse return error.PythonError;
-            defer python_c.py_decref(py_host);
-            const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
-            defer python_c.py_decref(py_port);
-            // IPv6 addr tuple is (host, port, flowinfo, scopeid)
-            const py_flow = python_c.PyLong_FromUnsignedLongLong(sa.flowinfo) orelse return error.PythonError;
-            defer python_c.py_decref(py_flow);
-            const py_scope = python_c.PyLong_FromUnsignedLongLong(sa.scope_id) orelse return error.PythonError;
-            defer python_c.py_decref(py_scope);
-            return python_c.PyTuple_Pack(4, py_host, py_port, py_flow, py_scope);
-        },
-        else => return null,
-    }
 }

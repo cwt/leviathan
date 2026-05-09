@@ -5,6 +5,7 @@ pub const _c = @cImport({
     // is NOT exported from libpython. We use Py_IncRef/Py_DecRef (stable ABI)
     // instead, which ARE exported and handle free-threading internally.
     @cInclude("Python.h");
+    @cInclude("arpa/inet.h");
     // Undefine Py_INCREF/Py_DECREF macros to prevent inline function inclusion
     @cUndef("Py_INCREF");
     @cUndef("Py_DECREF");
