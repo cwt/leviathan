@@ -7,4 +7,7 @@ from .leviathan_zig import StreamTransport
 
 def install():
     import asyncio
-    asyncio.set_event_loop_policy(EventLoopPolicy())
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        asyncio.set_event_loop_policy(EventLoopPolicy())

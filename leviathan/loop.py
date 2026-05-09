@@ -744,9 +744,12 @@ class Loop(_Loop):
             raise
 
 
-class EventLoopPolicy(asyncio.DefaultEventLoopPolicy):
-    """Event loop policy for Leviathan."""
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    class EventLoopPolicy(asyncio.DefaultEventLoopPolicy):
+        """Event loop policy for Leviathan."""
 
-    def new_event_loop(self) -> Loop:
-        """Create and return a new Leviathan event loop."""
-        return Loop()
+        def new_event_loop(self) -> Loop:
+            """Create and return a new Leviathan event loop."""
+            return Loop()

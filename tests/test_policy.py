@@ -2,12 +2,18 @@ import asyncio
 import leviathan
 import pytest
 
+import warnings
+
 def test_install():
     # Save original policy
-    old_policy = asyncio.get_event_loop_policy()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        old_policy = asyncio.get_event_loop_policy()
     try:
         leviathan.install()
-        policy = asyncio.get_event_loop_policy()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            policy = asyncio.get_event_loop_policy()
         assert isinstance(policy, leviathan.EventLoopPolicy)
         
         loop = asyncio.new_event_loop()
@@ -16,7 +22,9 @@ def test_install():
         finally:
             loop.close()
     finally:
-        asyncio.set_event_loop_policy(old_policy)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            asyncio.set_event_loop_policy(old_policy)
 
 def test_policy_new_event_loop():
     policy = leviathan.EventLoopPolicy()
