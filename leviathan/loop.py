@@ -145,15 +145,6 @@ class Loop(_Loop):
         self._exception_handler(context)
 
     # --------------------------------------------------------------------------------------------------------
-    # If you're interested in using debug mode, use the CPython event loop implementation instead of Leviathan.
-    def get_debug(self) -> bool:
-        return False
-
-    def set_debug(self, enabled: bool) -> None:
-        _ = enabled
-        return
-
-    # --------------------------------------------------------------------------------------------------------
 
     async def shutdown_asyncgens(self) -> None:
         asyncgens = self._asyncgens
@@ -436,11 +427,7 @@ class Loop(_Loop):
         srvs = await _Loop.create_server(
             self, protocol_factory, host, port, backlog=backlog, **kwargs,
         )
-        server = Server(self, srvs)
-        for srv in srvs:
-            if hasattr(srv, 'server_ref'):
-                srv.server_ref = server
-        return server
+        return Server(self, srvs)
 
     async def _create_ssl_server(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],
@@ -528,11 +515,7 @@ class Loop(_Loop):
         srvs = await _Loop.create_server(
             self, SSP, host, port, backlog=backlog, **kwargs,
         )
-        server = Server(self, srvs)
-        for srv in srvs:
-            if hasattr(srv, 'server_ref'):
-                srv.server_ref = server
-        return server
+        return Server(self, srvs)
 
     async def create_unix_connection(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],

@@ -18,6 +18,12 @@ pub const CallbackExceptionContext = struct {
 
 pub const ExceptionHandler = *const fn (anyerror, ?*anyopaque, ?CallbackExceptionContext) anyerror!void;
 
+pub const DebugState = struct {
+    slow_callback_duration: f64,
+};
+
+pub const WarningHandler = *const fn (duration: f64, ?CallbackExceptionContext, ?*anyopaque) void;
+
 pub const CallbackData = struct {
     io_uring_res: i32 = 0,
     io_uring_err: std.os.linux.E = .SUCCESS,
@@ -239,7 +245,9 @@ pub fn release_sets_queue(
 pub fn execute_callbacks(
     sets_queue: *CallbacksSetsQueue,
     comptime exception_handler: ?ExceptionHandler,
-    exception_handler_data: ?*anyopaque
+    exception_handler_data: ?*anyopaque,
+    warning_handler: ?WarningHandler,
+    debug_state: ?*const DebugState
 ) !usize {
     if (sets_queue.empty()) return 0;
 
@@ -258,6 +266,15 @@ pub fn execute_callbacks(
 
         const offset = callbacks_set.offset;
         for (callbacks_set.callbacks[offset..callbacks_num]) |*callback| {
+            if (debug_state != null) {
+                if (callback.data.exception_context) |ctx| {
+                    python_c.py_incref(ctx.module_ptr);
+                    if (ctx.callback_ptr) |cp| python_c.py_incref(cp);
+                }
+            }
+
+            const start_time = if (debug_state != null) std.time.nanoTimestamp() else 0;
+
             callback.func(&callback.data) catch |err| {
                 defer {
                     if (callback.cleanup) |cleanup| {
@@ -281,6 +298,20 @@ pub fn execute_callbacks(
                     return err2;
                 };
             };
+
+            if (debug_state) |ds| {
+                const end_time = std.time.nanoTimestamp();
+                const duration = @as(f64, @floatFromInt(end_time - start_time)) / 1e9;
+                if (duration >= ds.slow_callback_duration) {
+                    if (warning_handler) |wh| {
+                        wh(duration, callback.data.exception_context, exception_handler_data);
+                    }
+                }
+                if (callback.data.exception_context) |ctx| {
+                    python_c.py_decref(ctx.module_ptr);
+                    if (ctx.callback_ptr) |cp| python_c.py_decref(cp);
+                }
+            }
         }
         callbacks_executed += callbacks_num - offset;
 
@@ -400,7 +431,7 @@ test "Add new callback to queue and immediately execute" {
     try std.testing.expectEqual(ret, &callbacks_set.callbacks[0]);
     try std.testing.expectEqual(16, callbacks_set.callbacks.len);
 
-    const callbacks_executed  = try execute_callbacks(&set_queue, null, null);
+    const callbacks_executed  = try execute_callbacks(&set_queue, null, null, null, null);
     try std.testing.expectEqual(1, callbacks_executed);
     try std.testing.expectEqual(16, set_queue.capacity);
     try std.testing.expectEqual(16, set_queue.available_slots);
@@ -436,7 +467,7 @@ test "Selectively cancel callbacks during addition" {
     }
     try std.testing.expectEqual(70, (set_queue.capacity - set_queue.available_slots));
 
-    _ = try execute_callbacks(&set_queue, null, null);
+    _ = try execute_callbacks(&set_queue, null, null, null, null);
     try std.testing.expectEqual(35, executed);
 }
 
@@ -474,7 +505,7 @@ test "Handle exceptions during callback execution" {
     }
     try std.testing.expectEqual(70, (set_queue.capacity - set_queue.available_slots));
 
-    _ = try execute_callbacks(&set_queue, &test_exception_handler, &executed2);
+    _ = try execute_callbacks(&set_queue, &test_exception_handler, &executed2, null, null);
     try std.testing.expectEqual(69, executed);
     try std.testing.expectEqual(1, executed2);
 }
@@ -602,7 +633,7 @@ test "Execute callbacks and then prune sets" {
         _ = try set_queue.append(&callback, 2);
     }
 
-    const c_executed = try execute_callbacks(&set_queue, null, null);
+    const c_executed = try execute_callbacks(&set_queue, null, null, null, null);
     try std.testing.expectEqual(20, c_executed);
     try std.testing.expectEqual(3, set_queue.queue.len);
 

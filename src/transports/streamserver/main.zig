@@ -37,6 +37,18 @@ pub const StreamServerObject = extern struct {
 
 fn streamserver_dealloc(self: ?*StreamServerObject) callconv(.c) void {
     const instance = self.?;
+    if (!instance.closed and instance.server_fd >= 0) {
+        if (instance.loop) |loop| {
+            const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(loop));
+            if (loop_obj.debug) {
+                const msg = python_c.PyUnicode_FromFormat("unclosed server <StreamServerObject fd=%d>\x00", instance.server_fd);
+                if (msg) |m| {
+                    defer python_c.py_decref(m);
+                    python_c.py_warn(python_c.PyExc_ResourceWarning.?, m, 1);
+                }
+            }
+        }
+    }
     instance.deinit();
     const @"type": *python_c.PyTypeObject = python_c.get_type(@ptrCast(instance));
     @"type".tp_free.?(@ptrCast(instance));

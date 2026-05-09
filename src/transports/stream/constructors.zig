@@ -234,6 +234,7 @@ pub fn stream_traverse(self: ?*StreamTransportObject, visit: python_c.visitproc,
 
 pub fn stream_clear(self: ?*StreamTransportObject) callconv(.c) c_int {
     const py_transport = self.?;
+
     const write_transport_data = utils.get_data_ptr2(WriteTransport, "write_transport", py_transport);
     if (write_transport_data.initialized) {
         write_transport_data.deinit();
@@ -262,6 +263,19 @@ pub fn stream_clear(self: ?*StreamTransportObject) callconv(.c) c_int {
 
 pub fn stream_dealloc(self: ?*StreamTransportObject) callconv(.c) void {
     const instance = self.?;
+
+    if (!instance.closed and instance.fd >= 0) {
+        if (instance.loop) |loop| {
+            const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(loop));
+            if (loop_obj.debug) {
+                const msg = python_c.PyUnicode_FromFormat("unclosed transport <StreamTransport fd=%d>\x00", instance.fd);
+                if (msg) |m| {
+                    defer python_c.py_decref(m);
+                    python_c.py_warn(python_c.PyExc_ResourceWarning.?, m, 1);
+                }
+            }
+        }
+    }
 
     python_c.PyObject_GC_UnTrack(instance);
     _ = stream_clear(instance);

@@ -172,9 +172,10 @@ const stream_slots = [_]python_c.PyType_Slot{
     .{ .slot = python_c.Py_tp_init, .pfunc = @constCast(&Constructors.stream_init) },
     .{ .slot = python_c.Py_tp_dealloc, .pfunc = @constCast(&Constructors.stream_dealloc) },
     .{ .slot = python_c.Py_tp_methods, .pfunc = @constCast(PythonStreamMethods.ptr) },
-    // .{ .slot = python_c.Py_tp_members, .pfunc = @constCast(LoopMembers.ptr) },
     .{ .slot = 0, .pfunc = null },
 };
+
+// const PythonStreamMembers: []const python_c.PyMemberDef = &[_]python_c.PyMemberDef{
 
 const stream_spec = python_c.PyType_Spec{
     .name = "leviathan.StreamTransport\x00",

@@ -84,6 +84,11 @@ pub extern var PyExc_KeyboardInterrupt: ?*PyObject;
 pub extern var PyExc_SystemExit: ?*PyObject;
 pub extern var PyExc_NotImplementedError: ?*PyObject;
 pub extern var PyExc_BaseExceptionGroup: ?*PyObject;
+pub extern var PyExc_ResourceWarning: ?*PyObject;
+
+pub inline fn py_warn(category: *Python.PyObject, message: *Python.PyObject, stack_level: isize) void {
+    _ = _c.PyErr_WarnEx(category, @ptrCast(message), stack_level);
+}
 
 pub const PyBool_FromLong = _c.PyBool_FromLong;
 pub extern var PyBool_Type: PyTypeObject;
@@ -113,6 +118,7 @@ pub const PyList_Check = _c.PyList_Check;
 
 pub const PyUnicode_FromString = _c.PyUnicode_FromString;
 pub const PyUnicode_FromStringAndSize = _c.PyUnicode_FromStringAndSize;
+pub const PyUnicode_FromFormat = _c.PyUnicode_FromFormat;
 pub const PyUnicode_AsUTF8 = _c.PyUnicode_AsUTF8;
 pub const PyUnicode_AsUTF8AndSize = _c.PyUnicode_AsUTF8AndSize;
 pub const PyUnicode_CompareWithASCIIString = _c.PyUnicode_CompareWithASCIIString;

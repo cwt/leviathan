@@ -18,9 +18,12 @@ extern fn PyEval_RestoreThread(?*PyThreadState) void;
 // ------------------------------------------------------------
 
 fn exception_handler(
-    err: anyerror, py_exception_handler: ?*anyopaque,
+    err: anyerror, loop_obj_ptr: ?*anyopaque,
     context: ?CallbackManager.CallbackExceptionContext
 ) !void {
+    const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(loop_obj_ptr.?));
+    const py_exception_handler = loop_obj.exception_handler.?;
+
     utils.handle_zig_function_error(err, {});
     const exception = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
 
@@ -55,18 +58,67 @@ fn exception_handler(
         if (python_c.PyDict_SetItemString(context_dict, "message\x00", msg) < 0) return error.PythonError;
     }
 
-    const ret = python_c.PyObject_CallOneArg(@alignCast(@ptrCast(py_exception_handler.?)), context_dict)
+    const ret = python_c.PyObject_CallOneArg(py_exception_handler, context_dict)
         orelse return error.PythonError;
+    python_c.py_decref(ret);
+}
+
+fn slow_callback_warning_handler(
+    duration: f64, context: ?CallbackManager.CallbackExceptionContext,
+    loop_obj_ptr: ?*anyopaque
+) void {
+    const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(loop_obj_ptr.?));
+    
+    const context_dict = python_c.PyDict_New() orelse {
+        python_c.PyErr_Clear();
+        return;
+    };
+    defer python_c.py_decref(context_dict);
+
+    var msg_buf: [256]u8 = undefined;
+    const msg_str = std.fmt.bufPrint(&msg_buf, "Executing callback took {d:.6} seconds\x00", .{duration}) catch "Executing callback took too long\x00";
+    
+    const msg = python_c.PyUnicode_FromString(msg_str.ptr) orelse {
+        python_c.PyErr_Clear();
+        return;
+    };
+    defer python_c.py_decref(msg);
+    _ = python_c.PyDict_SetItemString(context_dict, "message\x00", msg);
+
+    if (context) |ctx| {
+        _ = python_c.PyDict_SetItemString(context_dict, ctx.module_name, ctx.module_ptr);
+        if (ctx.callback_ptr) |c_ptr| {
+            _ = python_c.PyDict_SetItemString(context_dict, "callback\x00", c_ptr);
+        }
+    }
+
+    // Call loop.call_exception_handler(context)
+    const call_exception_handler = python_c.PyObject_GetAttrString(@ptrCast(loop_obj), "call_exception_handler\x00") orelse {
+        python_c.PyErr_Clear();
+        return;
+    };
+    defer python_c.py_decref(call_exception_handler);
+
+    const ret = python_c.PyObject_CallOneArg(call_exception_handler, context_dict) orelse {
+        python_c.PyErr_Clear();
+        return;
+    };
     python_c.py_decref(ret);
 }
 
 pub inline fn call_once(
     ready_queue: *CallbackManager.CallbacksSetsQueue,
     ready_tasks_queue_max_capacity: usize,
-    py_exception_handler: PyObject
+    loop_obj: *Loop.Python.LoopObject
 ) !usize {
+    const debug_state = CallbackManager.DebugState{ .slow_callback_duration = loop_obj.slow_callback_duration };
+
     const callbacks_executed = try CallbackManager.execute_callbacks(
-        ready_queue, if (builtin.is_test) null else &exception_handler, py_exception_handler
+        ready_queue,
+        if (builtin.is_test) null else &exception_handler,
+        loop_obj,
+        if (loop_obj.debug) &slow_callback_warning_handler else null,
+        if (loop_obj.debug) &debug_state else null
     );
     if (callbacks_executed == 0) {
         ready_queue.prune(ready_tasks_queue_max_capacity);
@@ -148,7 +200,7 @@ fn poll_blocking_events(
     }
 }
 
-pub fn start(self: *Loop, py_exception_handler: PyObject) !void {
+pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
     const mutex = &self.mutex;
     mutex.lock();
     defer mutex.unlock();
@@ -177,11 +229,10 @@ pub fn start(self: *Loop, py_exception_handler: PyObject) !void {
     const ready_tasks_queues: []CallbackManager.CallbacksSetsQueue = &self.ready_tasks_queues;
     const ready_tasks_queue_max_capacity = self.ready_tasks_queue_max_capacity;
 
-    const self_py = utils.get_parent_ptr(Loop.Python.LoopObject, self);
     var ready_tasks_queue_index = self.ready_tasks_queue_index;
     var wait_for_blocking_events: bool = false;
     while (!self.stopping) {
-        if (self_py.owner_pid != std.os.linux.getpid()) break;
+        if (loop_obj.owner_pid != std.os.linux.getpid()) break;
 
         const old_index = ready_tasks_queue_index;
         const ready_tasks_queue = &ready_tasks_queues[old_index];
@@ -201,7 +252,7 @@ pub fn start(self: *Loop, py_exception_handler: PyObject) !void {
         const callbacks_executed = try call_once(
             ready_tasks_queue,
             @max(self.reserved_slots, ready_tasks_queue_max_capacity),
-            py_exception_handler
+            loop_obj
         );
 
         wait_for_blocking_events = (callbacks_executed == 0);

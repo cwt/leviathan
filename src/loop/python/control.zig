@@ -25,7 +25,7 @@ inline fn z_loop_run_forever(self: *LoopObject) !PyObject {
     }
 
     var py_exception: ?PyObject = null;
-    Loop.Runner.start(loop_data, self.exception_handler.?) catch |err| {
+    Loop.Runner.start(loop_data, self) catch |err| {
         utils.handle_zig_function_error(err, {});
         py_exception = python_c.PyErr_GetRaisedException() orelse unreachable;
     };
@@ -85,6 +85,15 @@ pub fn loop_is_closed(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     defer mutex.unlock();
 
     return python_c.PyBool_FromLong(@intCast(@intFromBool(!loop_data.initialized)));
+}
+
+pub fn loop_get_debug(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
+    return python_c.PyBool_FromLong(@intCast(@intFromBool(self.?.debug)));
+}
+
+pub fn loop_set_debug(self: ?*LoopObject, enabled: ?PyObject) callconv(.c) ?PyObject {
+    self.?.debug = (python_c.PyObject_IsTrue(enabled.?) != 0);
+    return python_c.get_py_none();
 }
 
 pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {

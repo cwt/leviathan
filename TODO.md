@@ -190,7 +190,7 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 | # | Task | Effort | Status |
 |---|------|--------|--------|
 | 3.1 | `EventLoopPolicy` / `install()` | S | ✅ DONE |
-| 3.2 | Debug mode | M | — |
+| 3.2 | Debug mode | M | ✅ DONE |
 | 3.3 | Missing loop methods (`sock_*`, `set_task_factory`) | S–M | — |
 | 3.4 | Idle/Check handles + stream write deferral | S | — |
 | 3.5 | FS Event watcher (inotify) | S | — |

@@ -47,6 +47,19 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_flags = python_c.METH_NOARGS
     },
 
+    python_c.PyMethodDef{
+        .ml_name = "get_debug\x00",
+        .ml_meth = @ptrCast(&Control.loop_get_debug),
+        .ml_doc = "Get the debug mode of the event loop.\x00",
+        .ml_flags = python_c.METH_NOARGS
+    },
+    python_c.PyMethodDef{
+        .ml_name = "set_debug\x00",
+        .ml_meth = @ptrCast(&Control.loop_set_debug),
+        .ml_doc = "Set the debug mode of the event loop.\x00",
+        .ml_flags = python_c.METH_O
+    },
+
     // --------------------- Sheduling ---------------------
     python_c.PyMethodDef{
         .ml_name = "call_soon\x00",
@@ -219,6 +232,13 @@ const LoopMembers: []const python_c.PyMemberDef = &[_]python_c.PyMemberDef{
         .doc = null,
     },
     python_c.PyMemberDef{
+        .name = "__weakref__\x00",
+        .type = python_c.Py_T_OBJECT_EX,
+        .offset = @offsetOf(LoopObject, "weakref_list"),
+        .flags = 0,
+        .doc = null,
+    },
+    python_c.PyMemberDef{
         .name = null, .flags = 0, .offset = 0, .doc = null
     }
 };
@@ -234,7 +254,12 @@ pub const LoopObject = extern struct {
 
     exception_handler: ?PyObject,
     task_name_counter: u64,
-    owner_pid: std.os.linux.pid_t,
+    owner_pid: std.posix.pid_t,
+    owner_tid: u64,
+
+    debug: bool,
+    slow_callback_duration: f64,
+    weakref_list: ?PyObject,
 };
 
 const loop_slots = [_]python_c.PyType_Slot{
@@ -271,6 +296,16 @@ pub inline fn check_forked(self: *LoopObject) bool {
     if (self.owner_pid != std.os.linux.getpid()) {
         python_c.raise_python_runtime_error("Event loop was created in a parent process and is now being used in a child process after a fork(). This is unsafe. Please create a new event loop in the child process.\x00");
         return true;
+    }
+    return false;
+}
+
+pub inline fn check_thread(self: *LoopObject) bool {
+    if (self.debug) {
+        if (self.owner_tid != python_c._c.PyThread_get_thread_ident()) {
+            python_c.raise_python_runtime_error("Non-thread-safe operation: event loop is being used from a different thread than it was created in.\x00");
+            return true;
+        }
     }
     return false;
 }

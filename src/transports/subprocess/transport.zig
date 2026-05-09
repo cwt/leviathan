@@ -20,6 +20,18 @@ pub const SubprocessTransportObject = extern struct {
 
 fn subprocess_dealloc(self: ?*SubprocessTransportObject) callconv(.c) void {
     const instance = self.?;
+    if (!instance.closed) {
+        if (instance.loop) |loop| {
+            const loop_obj: *LoopObject = @alignCast(@ptrCast(loop));
+            if (loop_obj.debug) {
+                const msg = python_c.PyUnicode_FromFormat("unclosed transport <SubprocessTransport pid=%d>\x00", instance.pid);
+                if (msg) |m| {
+                    defer python_c.py_decref(m);
+                    python_c.py_warn(python_c.PyExc_ResourceWarning.?, m, 1);
+                }
+            }
+        }
+    }
     python_c.py_xdecref(instance.loop);
     python_c.py_xdecref(instance.protocol);
     python_c.py_xdecref(instance.returncode);
@@ -86,6 +98,8 @@ const SubprocessSlots: []const python_c.PyType_Slot = &[_]python_c.PyType_Slot{
     .{ .slot = python_c.Py_tp_doc, .pfunc = @constCast("Leviathan SubprocessTransport.") },
     .{ .slot = 0, .pfunc = null },
 };
+
+// const PythonSubprocessMembers: []const python_c.PyMemberDef = &[_]python_c.PyMemberDef{
 
 var subprocess_spec = python_c.PyType_Spec{
     .name = "leviathan.SubprocessTransport",

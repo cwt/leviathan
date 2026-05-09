@@ -42,6 +42,9 @@ inline fn z_loop_new(@"type": *python_c.PyTypeObject) !*LoopObject {
     instance.asyncgens_set_add = weakref_add;
     instance.asyncgens_set_discard = weakref_discard;
     instance.owner_pid = std.os.linux.getpid();
+    instance.owner_tid = python_c._c.PyThread_get_thread_ident();
+    instance.debug = false;
+    instance.slow_callback_duration = 0.1;
 
     return instance;
 }

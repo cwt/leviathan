@@ -39,6 +39,18 @@ const ExtraInfo = @import("extra_info.zig");
 
 fn datagram_dealloc(self: ?*DatagramTransportObject) callconv(.c) void {
     const instance = self.?;
+    if (!instance.closed and instance.fd >= 0) {
+        if (instance.loop) |loop| {
+            const loop_obj: *LoopObject = @alignCast(@ptrCast(loop));
+            if (loop_obj.debug) {
+                const msg = python_c.PyUnicode_FromFormat("unclosed transport <DatagramTransport fd=%d>\x00", instance.fd);
+                if (msg) |m| {
+                    defer python_c.py_decref(m);
+                    python_c.py_warn(python_c.PyExc_ResourceWarning.?, m, 1);
+                }
+            }
+        }
+    }
     if (instance.fd >= 0) {
         std.posix.close(instance.fd);
         instance.fd = -1;
@@ -150,6 +162,8 @@ const DatagramSlots: []const python_c.PyType_Slot = &[_]python_c.PyType_Slot{
     .{ .slot = python_c.Py_tp_doc, .pfunc = @constCast("Leviathan DatagramTransport.\x00") },
     .{ .slot = 0, .pfunc = null },
 };
+
+// const PythonDatagramMembers: []const python_c.PyMemberDef = &[_]python_c.PyMemberDef{
 
 const datagram_spec = python_c.PyType_Spec{
     .name = "leviathan.DatagramTransport\x00",
