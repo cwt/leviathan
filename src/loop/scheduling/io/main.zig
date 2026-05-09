@@ -25,10 +25,12 @@ pub const BlockingOperation = enum {
     PerformWrite,
     PerformWriteV,
     PerformRecvMsg,
+    PerformSendMsg,
     WaitTimer,
     Cancel,
     SocketShutdown,
     SocketConnect,
+    SocketAccept,
 };
 
 pub const BlockingTaskData = union(enum) {
@@ -75,7 +77,7 @@ pub const BlockingTask = struct {
                 }
             },
             .Cancel => {},
-            .PerformWriteV, .PerformWrite => {
+            .PerformWriteV, .PerformWrite, .PerformSendMsg => {
                 switch (result) {
                     .SUCCESS => {},
                     .CANCELED, .BADF, .FBIG, .INTR, .IO, .NOSPC, .INVAL, .CONNRESET,  // Expected errors
@@ -109,7 +111,7 @@ pub const BlockingTask = struct {
                     }
                 }
             },
-            .SocketConnect => {
+            .SocketConnect, .SocketAccept => {
                 switch (result) {
                     .SUCCESS => {},
                     .ACCES, .PERM, .ADDRINUSE, .ADDRNOTAVAIL, .AFNOSUPPORT, .ALREADY,
@@ -266,10 +268,12 @@ pub const BlockingOperationData = union(BlockingOperation) {
     PerformWrite: Write.PerformData,
     PerformWriteV: Write.PerformVData,
     PerformRecvMsg: Read.RecvMsgData,
+    PerformSendMsg: Write.SendMsgData,
     WaitTimer: Timer.WaitData,
     Cancel: usize,
     SocketShutdown: Socket.ShutdownData,
     SocketConnect: Socket.ConnectData,
+    SocketAccept: Socket.AcceptData,
 };
 
 loop: *Loop,
@@ -383,10 +387,12 @@ pub fn queue(self: *IO, event: BlockingOperationData) !usize {
         .PerformWrite => |data| try Write.perform(&self.ring, set, data),
         .PerformWriteV => |data| try Write.perform_with_iovecs(&self.ring, set, data),
         .PerformRecvMsg => |data| try Read.recvmsg(&self.ring, set, data),
+        .PerformSendMsg => |data| try Write.sendmsg(&self.ring, set, data),
         .WaitTimer => |data| try Timer.wait(&self.ring, set, data),
         .SocketShutdown => |data| try Socket.shutdown(&self.ring, set, data),
         .Cancel => |data| try Cancel.perform(&self.ring, data),
-        .SocketConnect => |data| try Socket.connect(&self.ring, set, data)
+        .SocketConnect => |data| try Socket.connect(&self.ring, set, data),
+        .SocketAccept => |data| try Socket.accept(&self.ring, set, data)
     };
 }
 

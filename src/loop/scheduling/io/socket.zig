@@ -15,6 +15,14 @@ pub const ShutdownData = struct {
     how: u32
 };
 
+pub const AcceptData = struct {
+    callback: CallbackManager.Callback,
+    socket_fd: std.posix.fd_t,
+    addr: ?*std.posix.sockaddr,
+    addrlen: ?*std.posix.socklen_t,
+    flags: u32 = std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC,
+};
+
 pub fn connect(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: ConnectData) !usize {
     const data_ptr = try set.push(.SocketConnect, &data.callback);
     errdefer data_ptr.discard();
@@ -22,6 +30,20 @@ pub fn connect(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Con
     const sqe = try ring.connect(
         @intCast(@intFromPtr(data_ptr)), data.socket_fd, data.addr, data.len
     );
+    sqe.flags |= std.os.linux.IOSQE_ASYNC;
+
+    const ret = try IO.submit_guaranteed(ring);
+    if (ret != 1) {
+        return error.SQENotSubmitted;
+    }
+    return @intFromPtr(data_ptr);
+}
+
+pub fn accept(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: AcceptData) !usize {
+    const data_ptr = try set.push(.SocketAccept, &data.callback);
+    errdefer data_ptr.discard();
+
+    const sqe = try ring.accept(@intCast(@intFromPtr(data_ptr)), data.socket_fd, data.addr, data.addrlen, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
     const ret = try IO.submit_guaranteed(ring);

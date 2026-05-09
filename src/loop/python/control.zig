@@ -96,6 +96,31 @@ pub fn loop_set_debug(self: ?*LoopObject, enabled: ?PyObject) callconv(.c) ?PyOb
     return python_c.get_py_none();
 }
 
+pub fn loop_get_task_factory(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
+    if (self.?.task_factory) |tf| return python_c.py_newref(tf);
+    return python_c.get_py_none();
+}
+
+pub fn loop_set_task_factory(self: ?*LoopObject, factory: ?PyObject) callconv(.c) ?PyObject {
+    if (factory) |f| {
+        if (!python_c.is_none(f) and python_c.PyCallable_Check(f) == 0) {
+            python_c.raise_python_type_error("task factory must be a callable or None\x00");
+            return null;
+        }
+    }
+    python_c.py_xdecref(self.?.task_factory);
+    if (factory) |f| {
+        if (python_c.is_none(f)) {
+            self.?.task_factory = null;
+        } else {
+            self.?.task_factory = python_c.py_newref(f);
+        }
+    } else {
+        self.?.task_factory = null;
+    }
+    return python_c.get_py_none();
+}
+
 pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     if (Loop.Python.check_forked(self.?)) return null;
     const instance = self.?;

@@ -21,6 +21,13 @@ pub const PerformVData = struct {
     zero_copy: bool = false
 };
 
+pub const SendMsgData = struct {
+    fd: std.posix.fd_t,
+    callback: CallbackManager.Callback,
+    msg: *const std.posix.msghdr_const,
+    flags: u32 = 0,
+};
+
 pub fn wait_ready(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: IO.WaitData) !usize {
     const data_ptr = try set.push(.WaitWritable, &data.callback);
     errdefer data_ptr.discard();
@@ -38,6 +45,20 @@ pub fn wait_ready(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: 
 
     const ret = try IO.submit_guaranteed(ring);
     if (ret != expected_submission) {
+        return error.SQENotSubmitted;
+    }
+    return @intFromPtr(data_ptr);
+}
+
+pub fn sendmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: SendMsgData) !usize {
+    const data_ptr = try set.push(.PerformSendMsg, &data.callback);
+    errdefer data_ptr.discard();
+
+    const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
+    sqe.flags |= std.os.linux.IOSQE_ASYNC;
+
+    const ret = try IO.submit_guaranteed(ring);
+    if (ret != 1) {
         return error.SQENotSubmitted;
     }
     return @intFromPtr(data_ptr);

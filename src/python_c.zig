@@ -57,6 +57,7 @@ pub const PYGEN_RETURN = _c.PYGEN_RETURN;
 pub const Py_MOD_GIL_NOT_USED = _c.Py_MOD_GIL_NOT_USED;
 
 pub const PyBUF_WRITABLE = _c.PyBUF_WRITABLE;
+pub const PyBUF_SIMPLE = _c.PyBUF_SIMPLE;
 
 pub const Py_IsTrue = _c.Py_IsTrue;
 pub const Py_TYPE = _c.Py_TYPE;
@@ -98,6 +99,7 @@ pub const PyLong_FromUnsignedLongLong = _c.PyLong_FromUnsignedLongLong;
 pub const PyLong_AsInt = _c.PyLong_AsInt;
 pub const PyLong_AsLong = _c.PyLong_AsLong;
 pub const PyLong_AsLongLong = _c.PyLong_AsLongLong;
+pub const PyLong_AsSsize_t = _c.PyLong_AsSsize_t;
 pub const PyLong_AsUnsignedLong = _c.PyLong_AsUnsignedLong;
 pub const PyLong_AsUnsignedLongLong = _c.PyLong_AsUnsignedLongLong;
 pub const PyFloat_AsDouble = _c.PyFloat_AsDouble;
@@ -134,6 +136,7 @@ pub const PyObject_GetAttrString = _c.PyObject_GetAttrString;
 pub const PyObject_SetAttrString = _c.PyObject_SetAttrString;
 pub const PyObject_CallNoArgs = _c.PyObject_CallNoArgs;
 pub const PyObject_CallOneArg = _c.PyObject_CallOneArg;
+pub const PyObject_CallMethod = _c.PyObject_CallMethod;
 pub const PyObject_CallObject = _c.PyObject_CallObject;
 pub const PyObject_CallFunction = _c.PyObject_CallFunction;
 pub const PyObject_CallFunctionObjArgs = _c.PyObject_CallFunctionObjArgs;

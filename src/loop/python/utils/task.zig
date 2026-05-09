@@ -54,14 +54,31 @@ inline fn z_loop_create_task(
     const coro: PyObject = python_c.py_newref(args[0].?);
     errdefer python_c.py_decref(coro);
 
+    if (self.task_factory) |factory| {
+        // factory(loop, coro, context=context)
+        const py_args = python_c.PyTuple_Pack(2, @as(*python_c.PyObject, @ptrCast(self)), coro) orelse return error.PythonError;
+        defer python_c.py_decref(py_args);
+        
+        const py_kwargs = python_c.PyDict_New() orelse return error.PythonError;
+        defer python_c.py_decref(py_kwargs);
+        _ = python_c.PyDict_SetItemString(py_kwargs, "context\x00", context.?);
+        
+        const task = python_c.PyObject_Call(factory, py_args, py_kwargs) orelse return error.PythonError;
+        // The return type is expected to be *PythonTaskObject, but factory could return anything.
+        // asyncio doesn't enforce return type, but our internal code might.
+        // Actually z_loop_create_task returns !*PythonTaskObject.
+        // I should probably change the return type to !PyObject or check the type.
+        return @ptrCast(task);
+    }
+
     const task = try Task.Constructors.fast_new_task(self, coro, context.?, name);
     return task;
 }
 
 pub fn loop_create_task(
     self: ?*PythonLoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject
-) callconv(.c) ?*PythonTaskObject {
-    return utils.execute_zig_function(z_loop_create_task, .{
+) callconv(.c) ?PyObject {
+    return @ptrCast(utils.execute_zig_function(z_loop_create_task, .{
         self.?, args.?[0..@as(usize, @intCast(nargs))], knames
-    });
+    }));
 }

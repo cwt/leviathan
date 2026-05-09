@@ -60,6 +60,19 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_flags = python_c.METH_O
     },
 
+    python_c.PyMethodDef{
+        .ml_name = "get_task_factory\x00",
+        .ml_meth = @ptrCast(&Control.loop_get_task_factory),
+        .ml_doc = "Return a task factory, or None if the default one is used.\x00",
+        .ml_flags = python_c.METH_NOARGS
+    },
+    python_c.PyMethodDef{
+        .ml_name = "set_task_factory\x00",
+        .ml_meth = @ptrCast(&Control.loop_set_task_factory),
+        .ml_doc = "Set a task factory.\x00",
+        .ml_flags = python_c.METH_O
+    },
+
     // --------------------- Sheduling ---------------------
     python_c.PyMethodDef{
         .ml_name = "call_soon\x00",
@@ -168,6 +181,49 @@ const PythonLoopMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
         .ml_doc = "Resolve a hostname to a list of address tuples.\x00",
         .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
     },
+    // --------------------- Socket Ops ---------------------
+    python_c.PyMethodDef{
+        .ml_name = "sock_accept\x00",
+        .ml_meth = @ptrCast(&IO.Socket.ops.loop_sock_accept),
+        .ml_doc = "Accept a connection.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
+    python_c.PyMethodDef{
+        .ml_name = "sock_connect\x00",
+        .ml_meth = @ptrCast(&IO.Socket.ops.loop_sock_connect),
+        .ml_doc = "Connect a socket.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
+    python_c.PyMethodDef{
+        .ml_name = "sock_recv\x00",
+        .ml_meth = @ptrCast(&IO.Socket.ops.loop_sock_recv),
+        .ml_doc = "Receive data.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
+    python_c.PyMethodDef{
+        .ml_name = "sock_sendall\x00",
+        .ml_meth = @ptrCast(&IO.Socket.ops.loop_sock_sendall),
+        .ml_doc = "Send all data.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
+    python_c.PyMethodDef{
+        .ml_name = "sock_recv_into\x00",
+        .ml_meth = @ptrCast(&IO.Socket.ops.loop_sock_recv_into),
+        .ml_doc = "Receive data into a buffer.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
+    python_c.PyMethodDef{
+        .ml_name = "sock_recvfrom\x00",
+        .ml_meth = @ptrCast(&IO.Socket.ops.loop_sock_recvfrom),
+        .ml_doc = "Receive data from a socket.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
+    python_c.PyMethodDef{
+        .ml_name = "sock_sendto\x00",
+        .ml_meth = @ptrCast(&IO.Socket.ops.loop_sock_sendto),
+        .ml_doc = "Send data to a specific address.\x00",
+        .ml_flags = python_c.METH_FASTCALL
+    },
     // --------------------- Unix pipes ---------------------
     python_c.PyMethodDef{
         .ml_name = "create_unix_connection\x00",
@@ -260,6 +316,8 @@ pub const LoopObject = extern struct {
     debug: bool,
     slow_callback_duration: f64,
     weakref_list: ?PyObject,
+
+    task_factory: ?PyObject,
 };
 
 const loop_slots = [_]python_c.PyType_Slot{

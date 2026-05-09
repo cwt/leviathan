@@ -45,6 +45,7 @@ inline fn z_loop_new(@"type": *python_c.PyTypeObject) !*LoopObject {
     instance.owner_tid = python_c._c.PyThread_get_thread_ident();
     instance.debug = false;
     instance.slow_callback_duration = 0.1;
+    instance.task_factory = null;
 
     return instance;
 }
