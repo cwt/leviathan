@@ -166,7 +166,7 @@ pub fn release_callbacks_queue(queue: *const CallbacksSetData) void {
 }
 
 pub inline fn add_done_callback(self: *Future, callback_data: Data) !void {
-    if (self.status != .pending) @panic("Trying to add callback when future finished");
+    if (self.status != .pending) return;
 
     try self.callbacks_queue.append(self.callbacks_arena_allocator, .{
         .data = callback_data
@@ -201,7 +201,7 @@ pub fn remove_done_callback(self: *Future, callback_id: u64) usize {
 }
 
 pub fn call_done_callbacks(self: *Future, new_status: Future.FutureStatus) void {
-    if (self.status != .pending) @panic("Trying to add callback when future finished");
+    if (self.status != .pending) return;
 
     self.status = new_status;
 

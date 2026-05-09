@@ -177,9 +177,12 @@ pub fn start(self: *Loop, py_exception_handler: PyObject) !void {
     const ready_tasks_queues: []CallbackManager.CallbacksSetsQueue = &self.ready_tasks_queues;
     const ready_tasks_queue_max_capacity = self.ready_tasks_queue_max_capacity;
 
+    const self_py = utils.get_parent_ptr(Loop.Python.LoopObject, self);
     var ready_tasks_queue_index = self.ready_tasks_queue_index;
     var wait_for_blocking_events: bool = false;
     while (!self.stopping) {
+        if (self_py.owner_pid != std.os.linux.getpid()) break;
+
         const old_index = ready_tasks_queue_index;
         const ready_tasks_queue = &ready_tasks_queues[old_index];
 

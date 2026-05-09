@@ -234,6 +234,7 @@ pub const LoopObject = extern struct {
 
     exception_handler: ?PyObject,
     task_name_counter: u64,
+    owner_pid: std.os.linux.pid_t,
 };
 
 const loop_slots = [_]python_c.PyType_Slot{
@@ -266,7 +267,8 @@ pub fn create_type() !void {
 
 pub inline fn check_forked(self: *LoopObject) bool {
     const loop_data = utils.get_data_ptr(Loop, self);
-    if (loop_data.forked) {
+    if (!loop_data.initialized) return false;
+    if (self.owner_pid != std.os.linux.getpid()) {
         python_c.raise_python_runtime_error("Event loop was created in a parent process and is now being used in a child process after a fork(). This is unsafe. Please create a new event loop in the child process.\x00");
         return true;
     }
