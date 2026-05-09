@@ -20,13 +20,11 @@ fn set_future_exception(err: anyerror, future: *FutureObject) !void {
     Future.Python.Result.future_fast_set_exception(future, future_data, exc);
 }
 
-inline fn get_string(py_obj: PyObject, alloc: std.mem.Allocator) ![]u8 {
+inline fn get_string_slice(py_obj: PyObject) ![]const u8 {
     var c_size: python_c.Py_ssize_t = 0;
     const ptr = python_c.PyUnicode_AsUTF8AndSize(py_obj, &c_size) orelse return error.PythonError;
     const size: usize = @intCast(c_size);
-    const r = try alloc.alloc(u8, size);
-    @memcpy(r, ptr[0..size]);
-    return r;
+    return ptr[0..size];
 }
 
 // ============================================================
@@ -37,27 +35,50 @@ const UnixConnectData = struct {
     future: *FutureObject,
     loop: *LoopObject,
     protocol_factory: PyObject,
-    path: []u8,
     allocator: std.mem.Allocator,
+    addr: std.posix.sockaddr.un,
+    socket_fd: std.posix.fd_t = -1,
 };
 
 fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
     const ucd: *UnixConnectData = @alignCast(@ptrCast(data.user_data.?));
+    const allocator = ucd.allocator;
+
     defer {
-        ucd.allocator.free(ucd.path);
+        if (ucd.socket_fd >= 0) {
+            std.posix.close(ucd.socket_fd);
+        }
         python_c.py_decref(ucd.protocol_factory);
-        ucd.allocator.destroy(ucd);
+        python_c.py_decref(@ptrCast(ucd.future));
+        python_c.py_decref(@ptrCast(ucd.loop));
+        allocator.destroy(ucd);
     }
 
-    const fd = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0);
-    errdefer std.posix.close(fd);
+    if (data.cancelled) {
+        python_c.raise_python_runtime_error("Unix connection cancelled");
+        return set_future_exception(error.PythonError, ucd.future);
+    }
 
-    const addr = try create_unix_sockaddr(ucd.path, ucd.allocator);
-    defer ucd.allocator.free(addr);
+    const io_uring_res = data.io_uring_res;
+    const io_uring_err = data.io_uring_err;
 
-    try std.posix.connect(fd, @ptrCast(@alignCast(&addr[0])), @intCast(addr.len));
+    if (io_uring_err != .SUCCESS or io_uring_res < 0) {
+        const errno_val = if (io_uring_res < 0) -io_uring_res else @intFromEnum(io_uring_err);
+        const exc = python_c.PyObject_CallFunction(
+            python_c.PyExc_OSError, "is\x00",
+            @as(c_int, @intCast(errno_val)),
+            "Connect call failed\x00"
+        ) orelse return set_future_exception(error.PythonError, ucd.future);
+        
+        const future_data = utils.get_data_ptr(Future, ucd.future);
+        Future.Python.Result.future_fast_set_exception(ucd.future, future_data, exc);
+        return;
+    }
 
-    const protocol = python_c.PyObject_CallNoArgs(ucd.protocol_factory) orelse return error.PythonError;
+    const fd = ucd.socket_fd;
+    ucd.socket_fd = -1; // Ownership transferred to transport
+
+    const protocol = python_c.PyObject_CallNoArgs(ucd.protocol_factory) orelse return set_future_exception(error.PythonError, ucd.future);
     errdefer python_c.py_decref(protocol);
 
     const transport = try Stream.Constructors.new_stream_transport(
@@ -66,18 +87,19 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
     errdefer python_c.py_decref(@ptrCast(transport));
 
     const connection_made = python_c.PyObject_GetAttrString(protocol, "connection_made\x00")
-        orelse return error.PythonError;
+        orelse return set_future_exception(error.PythonError, ucd.future);
     defer python_c.py_decref(connection_made);
 
     const ret = python_c.PyObject_CallOneArg(connection_made, @ptrCast(transport))
-        orelse return error.PythonError;
+        orelse return set_future_exception(error.PythonError, ucd.future);
     python_c.py_decref(ret);
 
-    const result_tuple = python_c.PyTuple_New(2) orelse return error.PythonError;
-    if (python_c.PyTuple_SetItem(result_tuple, 0, @ptrCast(transport)) != 0) return error.PythonError;
+    const result_tuple = python_c.PyTuple_New(2) orelse return set_future_exception(error.PythonError, ucd.future);
+    // Note: PyTuple_SetItem steals a reference
+    if (python_c.PyTuple_SetItem(result_tuple, 0, @ptrCast(transport)) != 0) return set_future_exception(error.PythonError, ucd.future);
     if (python_c.PyTuple_SetItem(result_tuple, 1, protocol) != 0) {
-        python_c.py_decref(@ptrCast(transport));
-        return error.PythonError;
+        python_c.py_decref(result_tuple);
+        return set_future_exception(error.PythonError, ucd.future);
     }
 
     const future_data = utils.get_data_ptr(Future, ucd.future);
@@ -85,15 +107,14 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
     python_c.py_decref(result_tuple);
 }
 
-fn create_unix_sockaddr(path: []const u8, alloc: std.mem.Allocator) ![]u8 {
+fn create_unix_sockaddr(path: []const u8) !std.posix.sockaddr.un {
     if (path.len >= 108) return error.NameTooLong;
-    const addr = try alloc.alloc(u8, @sizeOf(std.posix.sockaddr.un));
-    @memset(addr, 0);
-    const sun: *std.posix.sockaddr.un = @ptrCast(@alignCast(addr.ptr));
+    var sun: std.posix.sockaddr.un = undefined;
+    @memset(std.mem.asBytes(&sun), 0);
     sun.family = std.posix.AF.UNIX;
     @memcpy(sun.path[0..path.len], path);
     sun.path[path.len] = 0;
-    return addr;
+    return sun;
 }
 
 inline fn z_loop_create_unix_connection(
@@ -115,24 +136,43 @@ inline fn z_loop_create_unix_connection(
     }
 
     const loop_data = utils.get_data_ptr(Loop, self);
-    const alloc = loop_data.allocator;
     const fut = try Future.Python.Constructors.fast_new_future(self);
-    const path = try get_string(py_path, alloc);
+    const path = try get_string_slice(py_path);
 
-    const ucd = try alloc.create(UnixConnectData);
-    errdefer alloc.destroy(ucd);
+    const ucd = try loop_data.allocator.create(UnixConnectData);
+    errdefer loop_data.allocator.destroy(ucd);
     ucd.* = .{
-        .future = fut, .loop = self,
+        .future = @ptrCast(python_c.py_newref(@as(PyObject, @ptrCast(fut)))),
+        .loop = python_c.py_newref(self),
         .protocol_factory = python_c.py_newref(protocol_factory),
-        .path = path, .allocator = alloc,
+        .allocator = loop_data.allocator,
+        .addr = try create_unix_sockaddr(path),
     };
+    errdefer {
+        python_c.py_decref(@as(PyObject, @ptrCast(ucd.future)));
+        python_c.py_decref(@as(PyObject, @ptrCast(ucd.loop)));
+        python_c.py_decref(ucd.protocol_factory);
+    }
 
-    const callback = CallbackManager.Callback{
-        .func = &unix_connect_callback,
-        .cleanup = null,
-        .data = .{ .user_data = ucd, .exception_context = null },
-    };
-    try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
+    const fd = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC, 0);
+    ucd.socket_fd = fd;
+    errdefer std.posix.close(fd);
+
+    _ = try Loop.Scheduling.IO.queue(
+        &loop_data.io, .{
+            .SocketConnect = .{
+                .addr = @ptrCast(&ucd.addr),
+                .len = @sizeOf(std.posix.sockaddr.un),
+                .socket_fd = fd,
+                .callback = .{
+                    .func = &unix_connect_callback,
+                    .cleanup = null,
+                    .data = .{ .user_data = ucd, .exception_context = null },
+                },
+            },
+        }
+    );
+
     return fut;
 }
 
@@ -167,12 +207,9 @@ inline fn z_loop_create_unix_server(
         return error.PythonError;
     }
 
-    const loop_data = utils.get_data_ptr(Loop, self);
-    const alloc = loop_data.allocator;
     const fut = try Future.Python.Constructors.fast_new_future(self);
 
-    const path = try get_string(py_path, alloc);
-    defer alloc.free(path);
+    const path = try get_string_slice(py_path);
 
     const backlog: c_int = if (py_backlog) |b| @intCast(python_c.PyLong_AsInt(b)) else 100;
 
@@ -182,9 +219,8 @@ inline fn z_loop_create_unix_server(
     // Unlink existing socket file before bind
     std.posix.unlink(path) catch {};
 
-    const addr = try create_unix_sockaddr(path, alloc);
-    defer alloc.free(addr);
-    try std.posix.bind(fd, @ptrCast(@alignCast(&addr[0])), @intCast(addr.len));
+    const addr = try create_unix_sockaddr(path);
+    try std.posix.bind(fd, @ptrCast(&addr), @sizeOf(std.posix.sockaddr.un));
     errdefer std.posix.close(fd);
 
     try std.posix.listen(fd, @intCast(backlog));
@@ -220,4 +256,16 @@ pub fn loop_create_unix_server(
     return utils.execute_zig_function(
         z_loop_create_unix_server, .{ self.?, args.?[0..@as(usize, @intCast(nargs))], knames },
     );
+}
+
+test "create_unix_sockaddr: basic path" {
+    const path = "/tmp/test.sock";
+    const sun = try create_unix_sockaddr(path);
+    try std.testing.expectEqual(std.posix.AF.UNIX, sun.family);
+    try std.testing.expectEqualStrings(path, std.mem.span(@as([*:0]const u8, @ptrCast(&sun.path))));
+}
+
+test "create_unix_sockaddr: path too long" {
+    const long_path = "a" ** 108;
+    try std.testing.expectError(error.NameTooLong, create_unix_sockaddr(long_path));
 }

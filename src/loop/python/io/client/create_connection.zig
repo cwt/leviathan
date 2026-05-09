@@ -435,7 +435,8 @@ fn create_socket_and_submit_connect_req(address: *const std.net.Address, data: *
     const task_id = try Loop.Scheduling.IO.queue(
         &loop.io, .{
             .SocketConnect = .{
-                .address = address,
+                .addr = &address.any,
+                .len = address.getOsSockLen(),
                 .socket_fd = socket_fd,
                 .callback = .{
                     .func = &socket_connected_callback,

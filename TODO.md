@@ -106,8 +106,8 @@ Future returned immediately; DNS resolution happens async. Works with `localhost
 ### 2. Hardcoded IPv4 / Lack of DNS in Datagram
 `create_datagram_endpoint` manually splits host strings on `.` and hardcodes `AF_INET`. It lacks async DNS resolution and IPv6 support.
 
-### 3. Unix Connection Hangs
-`test_create_unix_connection_invalid_path` is skipped because non-blocking `AF_UNIX` connect needs proper `io_uring` `SocketConnect` handling to catch connection errors without hanging.
+### 3. Unix Connection Hangs — ✅ FIXED
+Implemented async `io_uring` `SocketConnect` for `AF_UNIX`. Catching `ENOENT` and other connection errors properly sets the future exception instead of hanging. 6 tests pass.
 
 ---
 

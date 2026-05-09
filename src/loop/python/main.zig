@@ -263,6 +263,6 @@ pub fn create_type() !void {
     LoopType = @ptrCast(type_obj);
 }
 
-// test {
-//     std.testing.refAllDeclsRecursive(Network);
-// }
+test {
+    _ = IO;
+}

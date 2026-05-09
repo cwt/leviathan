@@ -129,4 +129,12 @@ pub const UnixSignals = @import("unix_signals.zig");
 pub const Python = @import("python/main.zig");
 pub const DNS = @import("dns/main.zig");
 
+test {
+    _ = Runner;
+    _ = Scheduling;
+    _ = UnixSignals;
+    _ = Python;
+    _ = DNS;
+}
+
 const Loop = @This();

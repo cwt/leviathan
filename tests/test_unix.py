@@ -96,7 +96,6 @@ def test_create_unix_server_sockets() -> None:
             pass
 
 
-@pytest.mark.skip(reason="hangs — non-blocking connect needs io_uring SocketConnect")
 def test_create_unix_connection_invalid_path() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()

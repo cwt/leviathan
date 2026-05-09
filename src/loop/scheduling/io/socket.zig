@@ -5,7 +5,8 @@ const IO = @import("main.zig");
 
 pub const ConnectData = struct {
     callback: CallbackManager.Callback,
-    address: *const std.net.Address,
+    addr: *const std.posix.sockaddr,
+    len: std.posix.socklen_t,
     socket_fd: std.posix.fd_t
 };
 
@@ -19,8 +20,7 @@ pub fn connect(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Con
     errdefer data_ptr.discard();
 
     const sqe = try ring.connect(
-        @intCast(@intFromPtr(data_ptr)), data.socket_fd, &data.address.any,
-        data.address.getOsSockLen()
+        @intCast(@intFromPtr(data_ptr)), data.socket_fd, data.addr, data.len
     );
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
