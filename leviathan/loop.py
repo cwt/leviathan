@@ -759,3 +759,11 @@ class Loop(_Loop):
                 popen.wait()
             _subprocess_popens.pop(popen.pid, None)
             raise
+
+
+class EventLoopPolicy(asyncio.DefaultEventLoopPolicy):
+    """Event loop policy for Leviathan."""
+
+    def new_event_loop(self) -> Loop:
+        """Create and return a new Leviathan event loop."""
+        return Loop()
