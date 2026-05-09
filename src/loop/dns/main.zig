@@ -312,4 +312,5 @@ test "get_cache_slot handles different hostname lengths" {
 test {
     std.testing.refAllDecls(Parsers);
     std.testing.refAllDecls(Cache);
+    std.testing.refAllDecls(Resolv);
 }

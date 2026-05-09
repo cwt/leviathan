@@ -103,10 +103,10 @@ fn read_completed(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(py_data);
         
         // Format source address
-        const py_addr = try format_sockaddr(&rd.addr, rd.msg.namelen);
-        defer python_c.py_xdecref(py_addr);
+        const py_addr = (try format_sockaddr(&rd.addr, rd.msg.namelen)) orelse python_c.get_py_none();
+        defer python_c.py_decref(py_addr);
 
-        const args = python_c.PyTuple_Pack(2, py_data, py_addr orelse python_c.get_py_none()) orelse return error.PythonError;
+        const args = python_c.PyTuple_Pack(2, py_data, py_addr) orelse return error.PythonError;
         defer python_c.py_decref(args);
         const r = python_c.PyObject_CallObject(dr, args) orelse return error.PythonError;
         python_c.py_decref(r);

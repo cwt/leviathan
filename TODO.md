@@ -101,7 +101,7 @@ Future returned immediately; DNS resolution happens async. Works with `localhost
 
 **Remaining issues:**
 - `create_server` with external hostnames fails with `AddressNotAvailable` (expected - can't bind to public IPs).
-- DNS response parsing still needs verification with various DNS response formats (EDNS0, DNSSEC, etc.).
+- DNS response parsing fixed and verified with robust `skip_name` and multi-question support. Added 6 Zig unit tests.
 
 ### 2. Hardcoded IPv4 / Lack of DNS in Datagram — ✅ FIXED
 Implemented async state machine for `create_datagram_endpoint` using `Loop.DNS.lookup`. Added `io_uring` `recvmsg` support for receiving source addresses. Full IPv4/IPv6 support. 4 tests pass.

@@ -73,6 +73,7 @@ const ServerQueryData = struct {
     results_to_process: u16 = 0,
 
     min_ttl: u32 = std.math.maxInt(u32),
+    finished: bool = false,
 
     pub inline fn cancel(self: *ServerQueryData) void {
         const socket_fd = self.socket_fd;
@@ -83,6 +84,9 @@ const ServerQueryData = struct {
     }
 
     pub fn release(self: *ServerQueryData) void {
+        if (self.finished) return;
+        self.finished = true;
+
         self.cancel();
 
         const control_data = self.control_data;
@@ -148,8 +152,6 @@ fn mark_resolved_and_execute_user_callbacks(server_data: *ServerQueryData) !void
     for (control_data.user_callbacks.items) |*v| {
         Loop.Scheduling.Soon.dispatch_guaranteed(loop, v);
     }
-
-    server_data.release();
 }
 
 fn check_send_operation_result(data: *const CallbackManager.CallbackData) !void {
@@ -160,7 +162,6 @@ fn check_send_operation_result(data: *const CallbackManager.CallbackData) !void 
 
     const control_data = server_data.control_data;
     if (io_uring_err != .SUCCESS or control_data.resolved or data.cancelled) {
-        server_data.release();
         return;
     }
 
@@ -216,25 +217,24 @@ fn check_send_operation_result(data: *const CallbackManager.CallbackData) !void 
     _ = try server_data.loop.io.queue(operation_data);
 }
 
-fn parse_individual_dns_result(data: []const u8, result: *std.net.Address, new_result: *bool, ttl: *u32) ?usize {
-    var offset: usize = 0;
-    if (data[offset] & 0xC0 == 0xC0) {
-        offset += 2;
-    } else {
-        while (true) {
-            if (offset >= data.len) {
-                return null;
-            }
-
-            const lenght = data[offset];
-            if (lenght == 0) {
-                offset += 1;
-                break;
-            }
-
-            offset += @intCast(lenght + 1);
+fn skip_name(data: []const u8, initial_offset: usize) ?usize {
+    var offset = initial_offset;
+    while (offset < data.len) {
+        const byte = data[offset];
+        if (byte == 0) {
+            return offset + 1;
         }
+        if ((byte & 0xC0) == 0xC0) {
+            if (offset + 2 > data.len) return null;
+            return offset + 2;
+        }
+        offset += @as(usize, byte) + 1;
     }
+    return null;
+}
+
+fn parse_individual_dns_result(data: []const u8, result: *std.net.Address, new_result: *bool, ttl: *u32) ?usize {
+    var offset = skip_name(data, 0) orelse return null;
 
     if ((offset + 10) > data.len) return null;
 
@@ -244,9 +244,12 @@ fn parse_individual_dns_result(data: []const u8, result: *std.net.Address, new_r
     const r_data_len = std.mem.readInt(u16, data[offset + 8 .. offset + 10][0..2], .big);
     offset += 10;
 
-    if (r_class == 1) {
+    const next_rr_offset = offset + @as(usize, @intCast(r_data_len));
+    if (next_rr_offset > data.len) return null;
+
+    if (r_class == 1) { // IN class
         switch (r_type) {
-            1 => {
+            1 => { // A
                 if (offset + 4 > data.len) return null;
                 var addr: [4]u8 = undefined;
                 @memcpy(&addr, data[offset..(offset + 4)]);
@@ -254,7 +257,7 @@ fn parse_individual_dns_result(data: []const u8, result: *std.net.Address, new_r
                 new_result.* = true;
                 ttl.* = r_ttl;
             },
-            28 => {
+            28 => { // AAAA
                 if (offset + 16 > data.len) return null;
                 var addr: [16]u8 = undefined;
                 @memcpy(&addr, data[offset..(offset + 16)]);
@@ -262,13 +265,15 @@ fn parse_individual_dns_result(data: []const u8, result: *std.net.Address, new_r
                 new_result.* = true;
                 ttl.* = r_ttl;
             },
-            else => {},
+            else => {
+                new_result.* = false;
+            },
         }
+    } else {
+        new_result.* = false;
     }
 
-    const final_offset = offset + @as(usize, @intCast(r_data_len));
-    if (final_offset > data.len) return null;
-    return final_offset;
+    return next_rr_offset;
 }
 
 fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
@@ -300,61 +305,59 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
         state = ResponseProcessingState.process_body;
     }
 
-    loop: switch (state) {
-        .process_header => {
-            if (data_received - offset >= 12) {
-                const results_len = std.mem.readInt(u16, response[offset + 6 .. offset + 8][0..2], .big);
-                offset += 12;
+    while (true) {
+        switch (state) {
+            .process_header => {
+                if (data_received - offset >= 12) {
+                    const qdcount = std.mem.readInt(u16, response[offset + 4 .. offset + 6][0..2], .big);
+                    const ancount = std.mem.readInt(u16, response[offset + 6 .. offset + 8][0..2], .big);
+                    offset += 12;
 
-                if (results_len == 0) {
-                    hostnames_processed = hostnames_len;
-                } else {
-                    // Skip query domain with bounds check
-                    while (offset < data_received) {
-                        const byte = response[offset];
-                        if (byte == 0) {
-                            offset += 1;
-                            break;
-                        }
-                        if (byte & 0xC0 == 0xC0) {
-                            // Compression pointer: 2 bytes
-                            if (offset + 2 > data_received) break;
-                            offset += 2;
-                            break;
-                        }
-                        const next_offset = offset + 1 + byte;
-                        if (next_offset > data_received) break;
-                        offset = next_offset;
-                    }
+                    if (ancount == 0) {
+                        hostnames_processed = hostnames_len;
+                    } else {
+                        // Skip all questions
+                        var i: u16 = 0;
+                        while (i < qdcount) : (i += 1) {
+                            offset = skip_name(response[0..data_received], offset) orelse {
+                                return;
+                            };
 
-                    if (offset + 5 <= data_received) {
-                        offset += 5;
-                        results_to_process = results_len;
-                        continue :loop ResponseProcessingState.process_body;
+                            if (offset + 4 > data_received) {
+                                return;
+                            }
+
+                            offset += 4; // Skip QTYPE and QCLASS
+                        }
+
+                        results_to_process = ancount;
+                        state = ResponseProcessingState.process_body;
+                        continue;
                     }
                 }
-            }
-        },
-        .process_body => while (results_to_process > 0) {
-            var result: std.net.Address = undefined;
-            var new_result: bool = true;
-            var ttl: u32 = std.math.maxInt(u32);
+            },
+            .process_body => while (results_to_process > 0) {
+                var result: std.net.Address = undefined;
+                var new_result: bool = true;
+                var ttl: u32 = std.math.maxInt(u32);
 
-            const new_offset = parse_individual_dns_result(
-                response[offset..],
-                &result,
-                &new_result,
-                &ttl,
-            ) orelse break;
+                const new_offset = parse_individual_dns_result(
+                    response[offset..],
+                    &result,
+                    &new_result,
+                    &ttl,
+                ) orelse break;
 
-            offset += new_offset;
-            if (new_result) {
-                try server_data.results.append(server_data.control_data.arena.allocator(), result);
-                server_data.min_ttl = @min(server_data.min_ttl, ttl);
-            }
+                offset += new_offset;
+                if (new_result) {
+                    try server_data.results.append(server_data.control_data.arena.allocator(), result);
+                    server_data.min_ttl = @min(server_data.min_ttl, ttl);
+                }
 
-            results_to_process -= 1;
-        },
+                results_to_process -= 1;
+            },
+        }
+        break;
     }
     server_data.payload_offset = offset;
     server_data.hostnames_array.processed = hostnames_processed;
@@ -362,8 +365,6 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
 
     if (server_data.results.items.len > 0) {
         try mark_resolved_and_execute_user_callbacks(server_data);
-    } else {
-        server_data.release();
     }
 }
 
@@ -593,3 +594,91 @@ pub fn queue(
         queries_sent += 1;
     }
 }
+
+test "skip_name: simple name" {
+    const data = "\x06google\x03com\x00";
+    try std.testing.expectEqual(@as(usize, 12), skip_name(data, 0).?);
+}
+
+test "skip_name: compression pointer" {
+    const data = "\x06google\x03com\x00\xC0\x00";
+    try std.testing.expectEqual(@as(usize, 12), skip_name(data, 0).?);
+    try std.testing.expectEqual(@as(usize, 14), skip_name(data, 12).?);
+}
+
+test "skip_name: mixed labels and pointer" {
+    const data = "\x03www\xC0\x00";
+    try std.testing.expectEqual(@as(usize, 6), skip_name(data, 0).?);
+}
+
+test "parse_individual_dns_result: A record" {
+    const data = "\xC0\x0C\x00\x01\x00\x01\x00\x00\x01\x2C\x00\x04\xD8\x3A\xD3\xA4";
+    var res: std.net.Address = undefined;
+    var new_res: bool = false;
+    var ttl: u32 = 0;
+
+    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    try std.testing.expectEqual(@as(usize, 16), next_offset);
+    try std.testing.expect(new_res);
+    try std.testing.expectEqual(@as(u32, 300), ttl);
+    try std.testing.expectEqual(std.posix.AF.INET, res.any.family);
+}
+
+test "parse_individual_dns_result: AAAA record" {
+    const data = "\xC0\x0C\x00\x1C\x00\x01\x00\x00\x01\x2C\x00\x10\x2A\x00\x14\x50\x40\x01\x08\x03\x00\x00\x00\x00\x00\x00\x20\x0E";
+    var res: std.net.Address = undefined;
+    var new_res: bool = false;
+    var ttl: u32 = 0;
+
+    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    try std.testing.expectEqual(@as(usize, 28), next_offset);
+    try std.testing.expect(new_res);
+    try std.testing.expectEqual(std.posix.AF.INET6, res.any.family);
+}
+
+test "skip_name: malformed" {
+    // Length exceeds data
+    const data1 = "\x05goog";
+    try std.testing.expectEqual(@as(?usize, null), skip_name(data1, 0));
+    
+    // Unterminated
+    const data2 = "\x06google";
+    try std.testing.expectEqual(@as(?usize, null), skip_name(data2, 0));
+    
+    // Truncated compression pointer
+    const data3 = "\xC0";
+    try std.testing.expectEqual(@as(?usize, null), skip_name(data3, 0));
+}
+
+test "parse_individual_dns_result: truncated record" {
+    const data = "\xC0\x0C\x00\x01\x00\x01\x00\x00\x01\x2C\x00\x04\xD8\x3A";
+    var res: std.net.Address = undefined;
+    var new_res: bool = false;
+    var ttl: u32 = 0;
+    
+    try std.testing.expectEqual(@as(?usize, null), parse_individual_dns_result(data, &res, &new_res, &ttl));
+}
+
+test "parse_individual_dns_result: skip non-IN class" {
+    const data = "\xC0\x0C\x00\x01\x00\x02\x00\x00\x01\x2C\x00\x04\xD8\x3A\xD3\xA4";
+    var res: std.net.Address = undefined;
+    var new_res: bool = true;
+    var ttl: u32 = 0;
+    
+    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    try std.testing.expectEqual(@as(usize, 16), next_offset);
+    try std.testing.expect(!new_res);
+}
+
+test "parse_individual_dns_result: ignore CNAME" {
+    // Type 5 is CNAME
+    const data = "\xC0\x0C\x00\x05\x00\x01\x00\x00\x01\x2C\x00\x02\xC0\x12";
+    var res: std.net.Address = undefined;
+    var new_res: bool = true;
+    var ttl: u32 = 0;
+    
+    const next_offset = parse_individual_dns_result(data, &res, &new_res, &ttl).?;
+    try std.testing.expectEqual(@as(usize, 14), next_offset);
+    try std.testing.expect(!new_res);
+}
+
