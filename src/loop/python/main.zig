@@ -1,3 +1,4 @@
+const std = @import("std");
 const Loop = @import("../main.zig");
 
 const utils = @import("utils");
@@ -261,6 +262,15 @@ pub fn create_type() !void {
     const type_obj = python_c.PyType_FromSpecWithBases(@constCast(&loop_spec), utils.PythonImports.base_event_loop)
         orelse return error.PythonError;
     LoopType = @ptrCast(type_obj);
+}
+
+pub inline fn check_forked(self: *LoopObject) bool {
+    const loop_data = utils.get_data_ptr(Loop, self);
+    if (loop_data.forked) {
+        python_c.raise_python_runtime_error("Event loop was created in a parent process and is now being used in a child process after a fork(). This is unsafe. Please create a new event loop in the child process.\x00");
+        return true;
+    }
+    return false;
 }
 
 test {

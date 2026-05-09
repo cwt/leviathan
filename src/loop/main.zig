@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const python_c = @import("python_c");
 const CallbackManager = @import("callback_manager");
 
 const Handle = @import("../handle.zig");
@@ -17,6 +18,32 @@ const utils = @import("utils");
 const WatchersBTree = utils.BTree(std.posix.fd_t, *FDWatcher, 11);
 
 const lock = @import("../utils/lock.zig");
+
+const LoopLinkedList = utils.LinkedList(*Loop);
+var all_loops: LoopLinkedList = undefined;
+var loops_mutex: lock.Mutex = undefined;
+var atfork_installed: bool = false;
+
+fn atfork_child() callconv(.c) void {
+    var node = all_loops.first;
+    while (node) |n| {
+        n.data.forked = true;
+        node = n.next;
+    }
+}
+
+fn install_atfork() !void {
+    if (atfork_installed) return;
+    if (python_c._c.pthread_atfork(null, null, &atfork_child) != 0) {
+        return error.SystemResources;
+    }
+    atfork_installed = true;
+}
+
+pub fn init_module(allocator: std.mem.Allocator) void {
+    all_loops = LoopLinkedList.init(allocator);
+    loops_mutex = lock.init();
+}
 
 allocator: std.mem.Allocator,
 
@@ -40,12 +67,17 @@ unix_signals: UnixSignals,
 running: bool = false,
 stopping: bool = false,
 initialized: bool = false,
+forked: bool = false,
+
+node: ?LoopLinkedList.Node = null,
 
 
 pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) !void {
     if (self.initialized) {
         @panic("Loop is already initialized");
     }
+
+    try install_atfork();
 
     var reader_watchers = try WatchersBTree.init(allocator);
     errdefer reader_watchers.deinit() catch |err| {
@@ -84,12 +116,25 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
     errdefer self.dns.deinit();
 
     self.initialized = true;
+
+    loops_mutex.lock();
+    defer loops_mutex.unlock();
+    self.node = try all_loops.create_new_node(self);
+    all_loops.append_node(self.node.?);
 }
 
 pub fn release(self: *Loop) void {
     if (self.running) {
         @panic("Loop is running, can't be deallocated");
     }
+
+    loops_mutex.lock();
+    if (self.node) |node| {
+        all_loops.unlink_node(node);
+        all_loops.release_node(node);
+        self.node = null;
+    }
+    loops_mutex.unlock();
 
     self.io.deinit();
     self.unix_signals.deinit();

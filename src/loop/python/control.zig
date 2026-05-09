@@ -9,6 +9,7 @@ const LoopObject = Loop.Python.LoopObject;
 const Hooks = @import("hooks.zig");
 
 inline fn z_loop_run_forever(self: *LoopObject) !PyObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     const loop_data = utils.get_data_ptr(Loop, self);
 
     try Hooks.setup_asyncgen_hooks(self);
@@ -54,6 +55,7 @@ pub fn loop_run_forever(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject
 }
 
 pub fn loop_stop(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
+    if (Loop.Python.check_forked(self.?)) return null;
     const loop_data = utils.get_data_ptr(Loop, self.?);
 
     const mutex = &loop_data.mutex;
@@ -65,6 +67,7 @@ pub fn loop_stop(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
 }
 
 pub fn loop_is_running(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
+    if (Loop.Python.check_forked(self.?)) return null;
     const loop_data = utils.get_data_ptr(Loop, self.?);
     const mutex = &loop_data.mutex;
     mutex.lock();
@@ -74,6 +77,7 @@ pub fn loop_is_running(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject 
 }
 
 pub fn loop_is_closed(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
+    if (Loop.Python.check_forked(self.?)) return null;
     const loop_data = utils.get_data_ptr(Loop, self.?);
 
     const mutex = &loop_data.mutex;
@@ -84,6 +88,7 @@ pub fn loop_is_closed(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
 }
 
 pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
+    if (Loop.Python.check_forked(self.?)) return null;
     const instance = self.?;
 
     const loop_data = utils.get_data_ptr(Loop, instance);

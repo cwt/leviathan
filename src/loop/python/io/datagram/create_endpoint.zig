@@ -54,6 +54,7 @@ fn set_future_exception(err: anyerror, future: *FutureObject) !void {
 inline fn z_loop_create_datagram_endpoint(
     self: *LoopObject, args: []?PyObject, knames: ?PyObject
 ) !*FutureObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 1) {
         python_c.raise_python_value_error("protocol_factory is required");
         return error.PythonError;

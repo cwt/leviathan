@@ -198,7 +198,7 @@ No C-level SSL implementation — delegates to CPython's `ssl` module via Memory
 | 3.7 | PseudoSocket | S | — |
 | 3.8 | LRU cache | S | — |
 | 3.9 | Connection lost deferred scheduling | S | — |
-| 3.10 | Fork safety (`pthread_atfork`) | S | Partial (CLOEXEC on ring fd, PyOS_* exported) |
+| 3.10 | Fork safety (`pthread_atfork`) | S | ✅ DONE |
 | 3.11 | DNS enhancements | M | — |
 | 3.12 | macOS / BSD support | XL | — |
 

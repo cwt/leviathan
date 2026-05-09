@@ -74,6 +74,7 @@ fn build_result_tuple(address_list: []const std.net.Address, port: u16) !PyObjec
 }
 
 inline fn z_loop_getaddrinfo(self: *LoopObject, args: []?PyObject, knames: ?PyObject) !*FutureObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 1) {
         python_c.raise_python_value_error("host argument is required");
         return error.PythonError;

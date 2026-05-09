@@ -1,4 +1,4 @@
-const _c = @cImport({
+pub const _c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
     // Don't define Py_GIL_DISABLED here - it causes @cImport to pull in
     // inline functions that reference _Py_atomic_load_uint64_relaxed which

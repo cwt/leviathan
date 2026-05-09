@@ -120,6 +120,7 @@ fn create_unix_sockaddr(path: []const u8) !std.posix.sockaddr.un {
 inline fn z_loop_create_unix_connection(
     self: *LoopObject, args: []?PyObject, knames: ?PyObject
 ) !*FutureObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 2) {
         python_c.raise_python_value_error("protocol_factory and path are required");
         return error.PythonError;
@@ -191,6 +192,7 @@ pub fn loop_create_unix_connection(
 inline fn z_loop_create_unix_server(
     self: *LoopObject, args: []?PyObject, knames: ?PyObject
 ) !*FutureObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 2) {
         python_c.raise_python_value_error("protocol_factory and path are required");
         return error.PythonError;

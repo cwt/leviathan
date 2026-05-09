@@ -137,7 +137,9 @@ fn initialize_python_module() !*python_c.PyObject {
 
 export fn PyInit_leviathan_zig() ?*python_c.PyObject {
     utils.init_gpa();
+    loop.init_module(utils.gpa.allocator());
     utils.PythonImports.initialize_python_imports() catch return null;
     initialize_leviathan_types() catch return null;
     return initialize_python_module() catch return null;
-} 
+}
+ 

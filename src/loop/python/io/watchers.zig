@@ -110,6 +110,7 @@ inline fn z_loop_add_watcher(
     self: *LoopObject, args: []?PyObject,
     operation: Loop.Scheduling.IO.BlockingOperation
 ) !PyObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 2) {
         python_c.raise_python_value_error("Invalid number of arguments\x00");
         return error.PythonError;
@@ -267,6 +268,7 @@ inline fn z_loop_remove_watcher(
     self: *LoopObject, py_fd: PyObject,
     operation: Loop.Scheduling.IO.BlockingOperation
 ) !PyObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (python_c.long_check(py_fd)) {
         python_c.raise_python_runtime_error("Invalid file descriptor\x00");
         return error.PythonError;

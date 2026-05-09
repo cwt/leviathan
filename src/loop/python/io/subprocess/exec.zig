@@ -11,6 +11,7 @@ const SubprocessTransport = @import("../../../../transports/subprocess/transport
 inline fn z_loop_subprocess_exec(
     self: *LoopObject, args: []?PyObject, knames: ?PyObject
 ) !*FutureObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 1) {
         python_c.raise_python_value_error("protocol_factory is required");
         return error.PythonError;

@@ -36,6 +36,7 @@ inline fn z_loop_call_soon(
     self: *LoopObject, args: []?PyObject,
     knames: ?PyObject, comptime thread_safe: bool
 ) !*Handle.PythonHandleObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len == 0) {
         python_c.raise_python_value_error("Invalid number of arguments\x00");
         return error.PythonError;
@@ -150,6 +151,7 @@ inline fn z_loop_delayed_call(
     self: *LoopObject, args: []?PyObject,
     knames: ?PyObject, comptime is_absolute: bool
 ) !*TimerHandle.PythonTimerHandleObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len <= 1) {
         python_c.raise_python_value_error("Invalid number of arguments\x00");
         return error.PythonError;

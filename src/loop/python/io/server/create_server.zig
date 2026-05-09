@@ -81,6 +81,7 @@ fn get_host_slice(data: *ServerCreationData) ![]const u8 {
 inline fn z_loop_create_server(
     self: *LoopObject, args: []?PyObject, knames: ?PyObject
 ) !*FutureObject {
+    if (Loop.Python.check_forked(self)) return error.PythonError;
     if (args.len < 2) {
         python_c.raise_python_value_error("protocol_factory and host are required\x00");
         return error.PythonError;
