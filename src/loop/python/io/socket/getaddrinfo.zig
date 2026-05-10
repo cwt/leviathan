@@ -41,15 +41,16 @@ fn getaddrinfo_callback(data: *const CallbackManager.CallbackData) !void {
         const exc = python_c.PyObject_CallFunction(python_c.PyExc_RuntimeError, "s\x00", "Failed to resolve host\x00") orelse return error.PythonError;
         defer python_c.py_decref(exc);
         const future_data = utils.get_data_ptr(Future, gaid.future);
-        Future.Python.Result.future_fast_set_exception(gaid.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(gaid.future, future_data, exc);
         return;
-    };
+        }
+;
 
     const py_tuple = try build_result_tuple(address_list, gaid.port, gaid.family, gaid.socket_type, gaid.proto);
     defer python_c.py_decref(py_tuple);
 
     const future_data = utils.get_data_ptr(Future, gaid.future);
-    Future.Python.Result.future_fast_set_result(future_data, py_tuple);
+    try Future.Python.Result.future_fast_set_result(future_data, py_tuple);
 }
 
 fn build_result_tuple(address_list: []const std.net.Address, port: u16, family_filter: i32, socket_type: i32, proto: i32) !PyObject {
@@ -155,7 +156,7 @@ inline fn z_loop_getaddrinfo(self: *LoopObject, args: []const ?PyObject, knames:
         const py_res = try build_result_tuple(al, port, family, socket_type, proto);
         defer python_c.py_decref(py_res);
         const future_data = utils.get_data_ptr(Future, fut);
-        Future.Python.Result.future_fast_set_result(future_data, py_res);
+        try Future.Python.Result.future_fast_set_result(future_data, py_res);
         
         // Cleanup gaid and host_str since callback won't be called
         python_c.py_decref(@ptrCast(gaid.future));

@@ -141,10 +141,7 @@ pub const CallbacksSetsQueue = struct {
 
     pub inline fn append(self: *CallbacksSetsQueue, callback: *const Callback, min_capacity: usize) !*Callback {
         try self.ensure_capacity(min_capacity);
-        return self.try_append(callback) orelse std.debug.panic(
-            "Appening after increasing capacity failed. Min capacity requested: {d} - Available slots: {d}",
-            .{min_capacity, self.available_slots}
-        );
+        return self.try_append(callback) orelse error.Overflow;
     }
 
     pub fn prune(self: *CallbacksSetsQueue, max_capacity: usize) void {
@@ -685,4 +682,28 @@ test "Execute callbacks and then prune sets" {
     try std.testing.expectEqual(new_av_slots, set_queue.available_slots);
     try std.testing.expectEqual(set_queue.first_set, set_queue.queue.first);
     try std.testing.expectEqual(set_queue.last_set, set_queue.queue.first);
+}
+
+test "Queue try_append returns null when full" {
+    var callbacks_set: CallbacksSet = undefined;
+    try callbacks_set.init(std.testing.allocator, 1);
+    defer callbacks_set.deinit(std.testing.allocator);
+
+    var set_queue = CallbacksSetsQueue.init(std.testing.allocator);
+    defer set_queue.queue.clear();
+    // Manually inject a set to avoid dynamic expansion
+    const node = try set_queue.queue.create_new_node(callbacks_set);
+    set_queue.queue.append_node(node);
+    set_queue.first_set = node;
+    set_queue.last_set = node;
+    set_queue.available_slots = 1;
+
+    const callback = Callback{
+        .func = &test_callback,
+        .cleanup = null,
+        .data = .{ .user_data = null, .exception_context = null }
+    };
+
+    try std.testing.expect(set_queue.try_append(&callback) != null);
+    try std.testing.expect(set_queue.try_append(&callback) == null);
 }

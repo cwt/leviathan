@@ -140,7 +140,7 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
     var callback_info = self.callbacks.delete(sig);
     if (callback_info) |*v| {
         v.data.cancelled = true;
-        Loop.Scheduling.Soon.dispatch_guaranteed_nonthreadsafe(self.loop, v);
+        try Loop.Scheduling.Soon.dispatch_guaranteed_nonthreadsafe(self.loop, v);
     }else{
         return error.KeyNotFound;
     }
@@ -212,7 +212,7 @@ pub fn deinit(self: *UnixSignals) void {
 
         _ = c.signal(@intCast(sig), c.SIG_DFL);
         value.data.cancelled = true;
-        Loop.Scheduling.Soon.dispatch_guaranteed(loop, &value);
+        Loop.Scheduling.Soon.dispatch_guaranteed(loop, &value) catch {};
     }
 
     std.posix.sigprocmask(std.os.linux.SIG.UNBLOCK, &mask, null);

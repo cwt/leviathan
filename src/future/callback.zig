@@ -231,7 +231,7 @@ pub fn remove_done_callback(self: *Future, callback_id: u64) usize {
     return removed_count;
 }
 
-pub fn call_done_callbacks(self: *Future, new_status: Future.FutureStatus) void {
+pub fn call_done_callbacks(self: *Future, new_status: Future.FutureStatus) !void {
     if (self.status != .pending) return;
 
     self.status = new_status;
@@ -256,6 +256,6 @@ pub fn call_done_callbacks(self: *Future, new_status: Future.FutureStatus) void 
         }
     };
 
-    Loop.Scheduling.Soon.dispatch_guaranteed(self.loop, &callback);
+    try Loop.Scheduling.Soon.dispatch_guaranteed(self.loop, &callback);
     python_c.py_incref(@ptrCast(pyfut));
 }

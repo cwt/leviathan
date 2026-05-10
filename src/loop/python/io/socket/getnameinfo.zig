@@ -40,9 +40,10 @@ fn getnameinfo_callback(data: *const CallbackManager.CallbackData) !void {
         const exc = python_c.PyObject_CallFunction(python_c.PyExc_RuntimeError, "s\x00", "Failed to resolve name\x00") orelse return error.PythonError;
         defer python_c.py_decref(exc);
         const future_data = utils.get_data_ptr(Future, gnid.future);
-        Future.Python.Result.future_fast_set_exception(gnid.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(gnid.future, future_data, exc);
         return;
     };
+
 
     const hostname = switch (record.state) {
         .ptr => |name| name,
@@ -50,9 +51,9 @@ fn getnameinfo_callback(data: *const CallbackManager.CallbackData) !void {
             const exc = python_c.PyObject_CallFunction(python_c.PyExc_RuntimeError, "s\x00", "Reverse DNS failed\x00") orelse return error.PythonError;
             defer python_c.py_decref(exc);
             const future_data = utils.get_data_ptr(Future, gnid.future);
-            Future.Python.Result.future_fast_set_exception(gnid.future, future_data, exc);
+            try Future.Python.Result.future_fast_set_exception(gnid.future, future_data, exc);
             return;
-        }
+        },
     };
 
     const py_host = python_c.PyUnicode_FromStringAndSize(hostname.ptr, @intCast(hostname.len)) orelse return error.PythonError;
@@ -64,7 +65,7 @@ fn getnameinfo_callback(data: *const CallbackManager.CallbackData) !void {
     defer python_c.py_decref(py_res);
 
     const future_data = utils.get_data_ptr(Future, gnid.future);
-    Future.Python.Result.future_fast_set_result(future_data, py_res);
+    try Future.Python.Result.future_fast_set_result(future_data, py_res);
 }
 
 inline fn z_loop_getnameinfo(self: *LoopObject, args: []const ?PyObject) !*FutureObject {

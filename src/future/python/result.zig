@@ -67,9 +67,9 @@ pub fn future_exception(self: ?*PythonFutureObject, _: ?PyObject) callconv(.c) ?
     };
 }
 
-pub inline fn future_fast_set_exception(self: *PythonFutureObject, obj: *Future, exception: PyObject) void {
+pub inline fn future_fast_set_exception(self: *PythonFutureObject, obj: *Future, exception: PyObject) !void {
     self.exception = exception;
-    Future.Callback.call_done_callbacks(obj, .finished);
+    try Future.Callback.call_done_callbacks(obj, .finished);
 }
 
 inline fn z_future_set_exception(self: *PythonFutureObject, exception: PyObject) !PyObject {
@@ -88,7 +88,7 @@ inline fn z_future_set_exception(self: *PythonFutureObject, exception: PyObject)
         else => {}
     }
 
-    _ = future_fast_set_exception(self, future_data, python_c.py_newref(exception));
+    try future_fast_set_exception(self, future_data, python_c.py_newref(exception));
     return python_c.get_py_none();
 }
 
@@ -96,9 +96,9 @@ pub fn future_set_exception(self: ?*PythonFutureObject, exception: ?PyObject) ca
     return utils.execute_zig_function(z_future_set_exception, .{self.?, exception.?});
 }
 
-pub inline fn future_fast_set_result(obj: *Future, result: PyObject) void {
+pub inline fn future_fast_set_result(obj: *Future, result: PyObject) !void {
     obj.result = python_c.py_newref(result);
-    Future.Callback.call_done_callbacks(obj, .finished);
+    try Future.Callback.call_done_callbacks(obj, .finished);
 }
 
 inline fn z_future_set_result(self: *PythonFutureObject, result: PyObject) !PyObject {
@@ -112,7 +112,7 @@ inline fn z_future_set_result(self: *PythonFutureObject, result: PyObject) !PyOb
         else => {}
     }
 
-    future_fast_set_result(future_data, result);
+    try future_fast_set_result(future_data, result);
     return python_c.get_py_none();
 }
 

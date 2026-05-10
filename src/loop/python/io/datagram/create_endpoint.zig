@@ -48,7 +48,7 @@ fn set_future_exception(err: anyerror, future: *FutureObject) !void {
     utils.handle_zig_function_error(err, {});
     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
     const future_data = utils.get_data_ptr(Future, future);
-    Future.Python.Result.future_fast_set_exception(future, future_data, exc);
+    try Future.Python.Result.future_fast_set_exception(future, future_data, exc);
 }
 
 inline fn z_loop_create_datagram_endpoint(
@@ -284,7 +284,7 @@ fn create_endpoint(data: *const CallbackManager.CallbackData) !void {
     }
 
     const future_data = utils.get_data_ptr(Future, dcd.future);
-    Future.Python.Result.future_fast_set_result(future_data, result_tuple);
+    try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
     python_c.py_decref(result_tuple);
 }
 

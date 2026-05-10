@@ -56,7 +56,7 @@ fn set_future_exception(err: anyerror, future: *FutureObject) !void {
     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
 
     const future_data = utils.get_data_ptr(Future, future);
-    Future.Python.Result.future_fast_set_exception(future, future_data, exc);
+    try Future.Python.Result.future_fast_set_exception(future, future_data, exc);
 }
 
 inline fn z_loop_create_connection(
@@ -660,14 +660,14 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
                     @as(c_int, @intCast(errno_val)),
                     "Connect call failed\x00"
                 ) orelse {
-                    Future.Python.Result.future_fast_set_exception(
+                    try Future.Python.Result.future_fast_set_exception(
                         @ptrCast(future), future_data,
                         python_c.PyErr_GetRaisedException() orelse return error.PythonError
                     );
                     mcs.deinit();
                     return error.PythonError;
                 };
-                Future.Python.Result.future_fast_set_exception(@ptrCast(future), future_data, exc);
+                try Future.Python.Result.future_fast_set_exception(@ptrCast(future), future_data, exc);
             }
 
             mcs.deinit();
@@ -748,7 +748,7 @@ fn z_create_transport_and_set_future_result(data: *const TransportCreationData) 
     protocol_added_to_tuple = true;
 
     const future_data = utils.get_data_ptr(Future, data.future);
-    Future.Python.Result.future_fast_set_result(future_data, result_tuple);
+    try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
 }
 
 fn create_transport_and_set_future_result(

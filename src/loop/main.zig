@@ -55,18 +55,15 @@ initialized: bool = false,
 
 pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) !void {
     if (self.initialized) {
-        @panic("Loop is already initialized");
+        python_c.raise_python_runtime_error("Loop is already initialized\x00");
+        return error.PythonError;
     }
 
     var reader_watchers = try WatchersBTree.init(allocator);
-    errdefer reader_watchers.deinit() catch |err| {
-        std.debug.panic("Unexpected error while releasing reader watchers: {s}", .{@errorName(err)});
-    };
+    errdefer reader_watchers.deinit() catch {};
 
     var writer_watchers = try WatchersBTree.init(allocator);
-    errdefer writer_watchers.deinit() catch |err| {
-        std.debug.panic("Unexpected error while releasing writer watchers: {s}", .{@errorName(err)});
-    };
+    errdefer writer_watchers.deinit() catch {};
 
     self.* = .{
         .allocator = allocator,
@@ -107,7 +104,8 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
 pub fn release(self: *Loop) void {
     if (!self.initialized) return;
     if (self.running) {
-        @panic("Loop is running, can't be deallocated");
+        python_c.raise_python_runtime_error("Loop is running, can't be deallocated\x00");
+        return;
     }
     self.initialized = false;
 
@@ -171,7 +169,10 @@ pub fn remove_hook(self: *Loop, hook_type: HookType, node: HooksList.Node) void 
         .check => &self.check_hooks,
         .idle => &self.idle_hooks,
     };
-    hooks.unlink_node(node);
+    hooks.unlink_node(node) catch |err| {
+        if (err == utils.LinkedList(CallbackManager.Callback).errors.LinkedListEmpty) return;
+        unreachable;
+    };
     hooks.release_node(node);
 }
 

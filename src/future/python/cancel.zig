@@ -21,7 +21,7 @@ pub inline fn future_fast_cancel(instance: *PythonFutureObject, data: *Future, c
         }
     }
 
-    Future.Callback.call_done_callbacks(data, .canceled);
+    try Future.Callback.call_done_callbacks(data, .canceled);
     return true;
 }
 

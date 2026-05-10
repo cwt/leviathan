@@ -154,22 +154,22 @@ pub fn BTree(
             return value_ptr.*;
         }
 
-        inline fn insert_in_empty_node(node: *Node, keys: []const Key, values: []const Value) void {
-            if (keys.len != values.len) unreachable;
+        inline fn insert_in_empty_node(node: *Node, keys: []const Key, values: []const Value) !void {
+            if (keys.len != values.len) return error.InconsistentBTreeState;
 
             @memcpy(node.keys[0..keys.len], keys);
             @memcpy(node.values[0..values.len], values);
             node.nkeys = @intCast(keys.len);
         }
 
-        fn do_insertion(node: *Node, key: Key, value: Value, new_child: ?*Node) void {
+        fn do_insertion(node: *Node, key: Key, value: Value, new_child: ?*Node) !void {
             if (new_child) |ch| {
                 ch.parent = node;
             }
 
             const nkeys = node.nkeys;
             if (nkeys == 0) {
-                insert_in_empty_node(node, &.{key}, &.{value});
+                try insert_in_empty_node(node, &.{key}, &.{value});
                 node.childs[1] = new_child;
                 return;
             }
@@ -232,12 +232,13 @@ pub fn BTree(
         inline fn split_root_node(
             keys: []Key, values: []Value, childs: []?*Node,
             child_node1: *Node, child_node2: *Node
-        ) void {
+        ) !void {
+
             const middle_index = (Degree - 1)/2;
             const middle_index_plus_one = middle_index + 1;
 
-            insert_in_empty_node(child_node1, keys[0..middle_index], values[0..middle_index]);
-            insert_in_empty_node(child_node2, keys[middle_index_plus_one..], values[middle_index_plus_one..]);
+            try insert_in_empty_node(child_node1, keys[0..middle_index], values[0..middle_index]);
+            try insert_in_empty_node(child_node2, keys[middle_index_plus_one..], values[middle_index_plus_one..]);
 
             @memcpy(child_node1.childs[0..middle_index_plus_one], childs[0..middle_index_plus_one]);
             @memcpy(child_node2.childs[0..middle_index_plus_one], childs[middle_index_plus_one..]);
@@ -256,35 +257,36 @@ pub fn BTree(
         inline fn split_node(
             keys: []Key, values: []Value, childs: []?*Node,
             parent: *Node, new_child: *Node
-        ) void {
+        ) !void {
+
             const middle_index = (Degree - 1)/2;
             const middle_index_plus_one = middle_index + 1;
 
-            insert_in_empty_node(new_child, keys[middle_index_plus_one..], values[middle_index_plus_one..]);
+            try insert_in_empty_node(new_child, keys[middle_index_plus_one..], values[middle_index_plus_one..]);
             @memcpy(new_child.childs[0..middle_index_plus_one], childs[middle_index_plus_one..]);
 
             change_parent(new_child);
 
             @memset(childs[middle_index_plus_one..], null);
-            do_insertion(parent, keys[middle_index], values[middle_index], new_child);
+            try do_insertion(parent, keys[middle_index], values[middle_index], new_child);
         }
 
-        fn split_nodes(allocator: std.mem.Allocator, node: *Node) void {
+        fn split_nodes(allocator: std.mem.Allocator, node: *Node) !void {
             var current_node = node;
             while (current_node.nkeys == Degree) {
                 const keys = &current_node.keys;
                 const values = &current_node.values;
                 const childs = &current_node.childs;
 
-                const new_node1 = create_node(allocator) catch unreachable;
+                const new_node1 = try create_node(allocator);
                 const parent = current_node.parent;
                 if (parent) |p_node| {
-                    split_node(keys, values, childs, p_node, new_node1);
+                    try split_node(keys, values, childs, p_node, new_node1);
                     change_parent(current_node);
                     new_node1.parent = p_node;
                 }else{
-                    const new_node2 = create_node(allocator) catch unreachable;
-                    split_root_node(keys, values, childs, new_node1, new_node2);
+                    const new_node2 = try create_node(allocator);
+                    try split_root_node(keys, values, childs, new_node1, new_node2);
                     new_node1.parent = current_node;
                     new_node2.parent = current_node;
                 }
@@ -294,9 +296,9 @@ pub fn BTree(
             }
         }
 
-        inline fn insert_in_node(allocator: std.mem.Allocator, node: *Node, key: Key, value: Value) void {
-            do_insertion(node, key, value, null);
-            split_nodes(allocator, node);
+        inline fn insert_in_node(allocator: std.mem.Allocator, node: *Node, key: Key, value: Value) !void {
+            try do_insertion(node, key, value, null);
+            try split_nodes(allocator, node);
         }
 
         pub fn insert(self: *@This(), key: Key, value: Value) bool {
@@ -310,26 +312,27 @@ pub fn BTree(
                 }
             }
 
-            insert_in_node(allocator, node, key, value);
+            insert_in_node(allocator, node, key, value) catch return false;
             return true;
-        }
+            }
 
-        pub fn replace(self: *@This(), key: Key, value: Value) ?Value {
+            pub fn replace(self: *@This(), key: Key, value: Value) ?Value {
             const allocator = self.allocator;
 
             var node: *Node = self.parent;
             if (node.nkeys > 0) {
                 const previous_value_ptr = get_value_ptr(self, key, &node);
-                if (previous_value_ptr) |v| {
-                    const previous_value = v.*;
-                    v.* = value;
-                    return previous_value;
+                if (previous_value_ptr) |ptr| {
+                    const prev_value = ptr.*;
+                    ptr.* = value;
+                    return prev_value;
                 }
             }
 
-            insert_in_node(allocator, node, key, value);
+            insert_in_node(allocator, node, key, value) catch return null;
             return null;
-        }
+            }
+
 
         inline fn delete_from_left(allocator: std.mem.Allocator, node: *?*Node, key: *Key, value: *Value) void {
             var node_with_bigger_value: *Node = undefined;

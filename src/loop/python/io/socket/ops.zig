@@ -17,7 +17,7 @@ fn set_future_exception(err: anyerror, future: *FutureObject) !void {
     utils.handle_zig_function_error(err, {});
     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
     const future_data = utils.get_data_ptr(Future, future);
-    Future.Python.Result.future_fast_set_exception(future, future_data, exc);
+    try Future.Python.Result.future_fast_set_exception(future, future_data, exc);
 }
 
 // ============================================================
@@ -54,7 +54,8 @@ fn sock_accept_callback(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, ad.future);
-        Future.Python.Result.future_fast_set_exception(ad.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+ad.future, future_data, exc);
         return;
     }
 
@@ -93,7 +94,7 @@ fn sock_accept_callback(data: *const CallbackManager.CallbackData) !void {
     defer python_c.py_decref(result_tuple);
 
     const future_data = utils.get_data_ptr(Future, ad.future);
-    Future.Python.Result.future_fast_set_result(future_data, result_tuple);
+    try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
 }
 
 pub fn loop_sock_accept(
@@ -182,12 +183,14 @@ fn sock_connect_callback(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, scd.future);
-        Future.Python.Result.future_fast_set_exception(scd.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+scd.future, future_data, exc);
         return;
     }
 
     const future_data = utils.get_data_ptr(Future, scd.future);
-    Future.Python.Result.future_fast_set_result(future_data, python_c.get_py_none());
+    try Future.Python.Result.future_fast_set_result(future_data,
+ python_c.get_py_none());
 }
 
 pub fn loop_sock_connect(
@@ -280,7 +283,8 @@ fn sock_recv_callback(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, rd.future);
-        Future.Python.Result.future_fast_set_exception(rd.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+rd.future, future_data, exc);
         return;
     }
 
@@ -289,7 +293,8 @@ fn sock_recv_callback(data: *const CallbackManager.CallbackData) !void {
     defer python_c.py_decref(py_data);
 
     const future_data = utils.get_data_ptr(Future, rd.future);
-    Future.Python.Result.future_fast_set_result(future_data, py_data);
+    try Future.Python.Result.future_fast_set_result(future_data,
+ py_data);
 }
 
 pub fn loop_sock_recv(
@@ -387,7 +392,8 @@ fn sock_sendall_callback(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, sd.future);
-        Future.Python.Result.future_fast_set_exception(sd.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+sd.future, future_data, exc);
         return;
     }
 
@@ -419,7 +425,8 @@ fn sock_sendall_callback(data: *const CallbackManager.CallbackData) !void {
         sd.allocator.destroy(sd);
     }
     const future_data = utils.get_data_ptr(Future, sd.future);
-    Future.Python.Result.future_fast_set_result(future_data, python_c.get_py_none());
+    try Future.Python.Result.future_fast_set_result(future_data,
+ python_c.get_py_none());
 }
 
 pub fn loop_sock_sendall(
@@ -521,7 +528,8 @@ fn sock_recvfrom_callback(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, rd.future);
-        Future.Python.Result.future_fast_set_exception(rd.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+rd.future, future_data, exc);
         return;
     }
 
@@ -536,7 +544,8 @@ fn sock_recvfrom_callback(data: *const CallbackManager.CallbackData) !void {
     defer python_c.py_decref(result_tuple);
 
     const future_data = utils.get_data_ptr(Future, rd.future);
-    Future.Python.Result.future_fast_set_result(future_data, result_tuple);
+    try Future.Python.Result.future_fast_set_result(future_data,
+ result_tuple);
 }
 
 pub fn loop_sock_recvfrom(
@@ -640,12 +649,14 @@ fn sock_sendto_callback(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, sd.future);
-        Future.Python.Result.future_fast_set_exception(sd.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+sd.future, future_data, exc);
         return;
     }
 
     const future_data = utils.get_data_ptr(Future, sd.future);
-    Future.Python.Result.future_fast_set_result(future_data, python_c.PyLong_FromLong(@intCast(data.io_uring_res)));
+    try Future.Python.Result.future_fast_set_result(future_data,
+ python_c.PyLong_FromLong(@intCast(data.io_uring_res)));
 }
 
 pub fn loop_sock_sendto(
@@ -759,13 +770,15 @@ fn sock_recv_into_callback(data: *const CallbackManager.CallbackData) !void {
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, rd.future);
-        Future.Python.Result.future_fast_set_exception(rd.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+rd.future, future_data, exc);
         return;
     }
 
     const nread: usize = @intCast(@max(data.io_uring_res, 0));
     const future_data = utils.get_data_ptr(Future, rd.future);
-    Future.Python.Result.future_fast_set_result(future_data, python_c.PyLong_FromLong(@intCast(nread)));
+    try Future.Python.Result.future_fast_set_result(future_data,
+ python_c.PyLong_FromLong(@intCast(nread)));
 }
 
 pub fn loop_sock_recv_into(
@@ -855,11 +868,13 @@ fn sock_recv_into_callback_with_buf(data: *const CallbackManager.CallbackData) !
         defer python_c.py_decref(exc);
         
         const future_data = utils.get_data_ptr(Future, rd.base.future);
-        Future.Python.Result.future_fast_set_exception(rd.base.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+rd.base.future, future_data, exc);
         return;
     }
 
     const nread: usize = @intCast(@max(data.io_uring_res, 0));
     const future_data = utils.get_data_ptr(Future, rd.base.future);
-    Future.Python.Result.future_fast_set_result(future_data, python_c.PyLong_FromLong(@intCast(nread)));
+    try Future.Python.Result.future_fast_set_result(future_data,
+ python_c.PyLong_FromLong(@intCast(nread)));
 }

@@ -24,7 +24,7 @@ fn loop_watchers_cleanup_callback(ptr: ?*anyopaque) void {
         _ = switch (watcher.event_type) {
             std.c.POLL.IN => loop_data.reader_watchers.delete(fd),
             std.c.POLL.OUT => loop_data.writer_watchers.delete(fd),
-            else => unreachable
+            else => null
         };
     }
 
@@ -96,7 +96,12 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
                         .callback = watcher_callback,
                     },
                 },
-                else => unreachable
+                else => {
+                    // This is an internal error, but we should not panic.
+                    // Instead, we just stop re-arming.
+                    @call(.always_inline, loop_watchers_cleanup_callback, .{watcher});
+                    return;
+                }
             }
         );
 
@@ -177,16 +182,23 @@ inline fn z_loop_add_watcher(
         .event_type = switch (operation) {
             .WaitReadable => std.c.POLL.IN,
             .WaitWritable => std.c.POLL.OUT,
-            else => unreachable
+            else => {
+                python_c.raise_python_runtime_error("Invalid operation type for watcher\x00");
+                return error.PythonError;
+            }
         },
         .fd = fd
     };
 
-    const watchers = switch (operation) {
+        const watchers = switch (operation) {
         .WaitWritable => &loop_data.writer_watchers,
         .WaitReadable => &loop_data.reader_watchers,
-        else => unreachable
-    };
+        else => {
+            python_c.raise_python_runtime_error("Invalid operation type for watcher\x00");
+            return error.PythonError;
+        }
+        };
+
 
     const existing_watcher_ptr: ?*Loop.FDWatcher = watchers.get_value(fd, null);
     if (existing_watcher_ptr) |existing_watcher_data| {
@@ -239,7 +251,10 @@ inline fn z_loop_add_watcher(
                     .callback = watcher_callback
                 },
             },
-            else => unreachable
+            else => {
+                python_c.raise_python_runtime_error("Invalid operation type for watcher\x00");
+                return error.PythonError;
+            }
         }
     );
 
@@ -295,14 +310,18 @@ inline fn z_loop_remove_watcher(
     const watchers = switch (operation) {
         .WaitWritable => &loop_data.writer_watchers,
         .WaitReadable => &loop_data.reader_watchers,
-        else => unreachable
+        else => {
+            python_c.raise_python_runtime_error("Invalid operation type for watcher\x00");
+            return error.PythonError;
+        }
     };
 
     const existing_watcher_ptr: ?*Loop.FDWatcher = watchers.delete(fd);
     if (existing_watcher_ptr) |existing_watcher_data| {
         const blocking_task_id = existing_watcher_data.blocking_task_id;
         if (blocking_task_id == 0) {
-            @panic("Unexpected blocking task id");
+            python_c.raise_python_runtime_error("Watcher has no associated blocking task id\x00");
+            return error.PythonError;
         }
 
         existing_watcher_data.fd = -1;

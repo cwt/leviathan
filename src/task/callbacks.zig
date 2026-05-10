@@ -41,7 +41,7 @@ inline fn set_result(
     if (task.must_cancel) {
         _ = try Future.Python.Cancel.future_fast_cancel(&task.fut, future_data, task.fut.cancel_msg_py_object);
     }else{
-        Future.Python.Result.future_fast_set_result(future_data, result);
+        try Future.Python.Result.future_fast_set_result(future_data, result);
     }
 }
 
@@ -269,7 +269,7 @@ inline fn successfully_execution(
     try handle_legacy_future_object(task, result);
 }
 
-fn failed_execution(task: *Task.PythonTaskObject) error{PythonError}!void {
+fn failed_execution(task: *Task.PythonTaskObject) !void {
     const exc_match = python_c.PyErr_GivenExceptionMatches;
 
     const fut: *Future.Python.FutureObject = &task.fut;
@@ -305,7 +305,7 @@ fn failed_execution(task: *Task.PythonTaskObject) error{PythonError}!void {
         return;
     }
 
-    Future.Python.Result.future_fast_set_exception(fut, future_data, exception);
+    try Future.Python.Result.future_fast_set_exception(fut, future_data, exception);
     if (
         exc_match(exception, python_c.PyExc_SystemExit) > 0 or
         exc_match(exception, python_c.PyExc_KeyboardInterrupt) > 0
@@ -439,7 +439,8 @@ pub fn execute_task_throw(data: *const CallbackManager.CallbackData) !void {
         const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
 
         const fut = utils.get_data_ptr(Future, &task.fut);
-        Future.Python.Result.future_fast_set_exception(&task.fut, fut, exc);
+        try Future.Python.Result.future_fast_set_exception(
+&task.fut, fut, exc);
         python_c.py_decref(@ptrCast(task));
     };
 }
@@ -522,7 +523,8 @@ pub fn execute_task_send(data: *const CallbackManager.CallbackData) !void {
         const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
 
         const fut = utils.get_data_ptr(Future, &task.fut);
-        Future.Python.Result.future_fast_set_exception(&task.fut, fut, exc);
+        try Future.Python.Result.future_fast_set_exception(
+&task.fut, fut, exc);
         python_c.py_decref(@ptrCast(task));
     };
 }
@@ -544,7 +546,8 @@ fn wakeup_task(fut: ?*Future.Python.FutureObject, ptr: ?*anyopaque) !void {
             const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
 
             const future_data = utils.get_data_ptr(Future, &task.fut);
-            Future.Python.Result.future_fast_set_exception(&task.fut, future_data, exc);
+            try Future.Python.Result.future_fast_set_exception(
+&task.fut, future_data, exc);
             python_c.py_decref(@ptrCast(task));
         };
         return;
@@ -556,7 +559,8 @@ fn wakeup_task(fut: ?*Future.Python.FutureObject, ptr: ?*anyopaque) !void {
         const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
 
         const future_data = utils.get_data_ptr(Future, &task.fut);
-        Future.Python.Result.future_fast_set_exception(&task.fut, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(
+&task.fut, future_data, exc);
         python_c.py_decref(@ptrCast(task));
     };
 }

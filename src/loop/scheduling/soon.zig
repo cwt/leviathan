@@ -19,18 +19,18 @@ pub inline fn dispatch(self: *Loop, callback: *const CallbackManager.Callback) !
     try dispatch_nonthreadsafe(self, callback);
 }
 
-pub inline fn dispatch_guaranteed_nonthreadsafe(self: *Loop, callback: *const CallbackManager.Callback) void {
+pub inline fn dispatch_guaranteed_nonthreadsafe(self: *Loop, callback: *const CallbackManager.Callback) !void {
     const ready_queue = &self.ready_tasks_queues[self.ready_tasks_queue_index];
 
     self.reserved_slots -= 1;
 
-    _ = ready_queue.try_append(callback) orelse @panic("Trying to add a callback without available space");
+    _ = ready_queue.try_append(callback) orelse return error.Overflow;
 }
 
-pub inline fn dispatch_guaranteed(self: *Loop, callback: *const CallbackManager.Callback) void {
+pub inline fn dispatch_guaranteed(self: *Loop, callback: *const CallbackManager.Callback) !void {
     const mutex = &self.mutex;
     mutex.lock();
     defer mutex.unlock();
 
-    dispatch_guaranteed_nonthreadsafe(self, callback);
+    try dispatch_guaranteed_nonthreadsafe(self, callback);
 }

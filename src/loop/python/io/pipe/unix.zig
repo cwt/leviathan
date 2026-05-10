@@ -17,7 +17,7 @@ fn set_future_exception(err: anyerror, future: *FutureObject) !void {
     utils.handle_zig_function_error(err, {});
     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
     const future_data = utils.get_data_ptr(Future, future);
-    Future.Python.Result.future_fast_set_exception(future, future_data, exc);
+    try Future.Python.Result.future_fast_set_exception(future, future_data, exc);
 }
 
 inline fn get_string_slice(py_obj: PyObject) ![]const u8 {
@@ -71,7 +71,7 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
         ) orelse return set_future_exception(error.PythonError, ucd.future);
         
         const future_data = utils.get_data_ptr(Future, ucd.future);
-        Future.Python.Result.future_fast_set_exception(ucd.future, future_data, exc);
+        try Future.Python.Result.future_fast_set_exception(ucd.future, future_data, exc);
         return;
     }
 
@@ -101,9 +101,8 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
         python_c.py_decref(result_tuple);
         return set_future_exception(error.PythonError, ucd.future);
     }
-
     const future_data = utils.get_data_ptr(Future, ucd.future);
-    Future.Python.Result.future_fast_set_result(future_data, result_tuple);
+    try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
     python_c.py_decref(result_tuple);
 }
 
@@ -235,7 +234,7 @@ try std.posix.listen(fd, @intCast(backlog));
     };
 
     const future_data = utils.get_data_ptr(Future, fut);
-    Future.Python.Result.future_fast_set_result(future_data, server);
+    try Future.Python.Result.future_fast_set_result(future_data, server);
     python_c.py_decref(server);
     return fut;
 }

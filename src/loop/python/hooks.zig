@@ -69,7 +69,8 @@ const LoopAsyncGenFinalizerHookMethod = python_c.PyMethodDef{
 
 pub fn setup_asyncgen_hooks(self: *LoopObject) !void {
     if (self.old_asyncgen_hooks != null) {
-        @panic("Asyncgen hooks already set\x00");
+        python_c.raise_python_runtime_error("Asyncgen hooks already set\x00");
+        return error.PythonError;
     }
 
     self.old_asyncgen_hooks = python_c.PyObject_CallNoArgs(utils.PythonImports.get_asyncgen_hooks)

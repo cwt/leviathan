@@ -38,9 +38,9 @@ pub fn LinkedList(comptime T: type) type {
             self.allocator.destroy(node);
         }
 
-        pub fn unlink_node(self: *@This(), node: Node) void {
-            if (builtin.mode == .Debug and self.len == 0) {
-                @panic("Trying to pop elements while linked list is empty");
+        pub fn unlink_node(self: *@This(), node: Node) !void {
+            if (self.len == 0) {
+                return errors.LinkedListEmpty;
             }
 
             const prev_node = node.prev;

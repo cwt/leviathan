@@ -180,18 +180,18 @@ pub const BlockingTasksSet = struct {
         );
 
         if (self.disattached) {
-            self.list.unlink_node(node);
+            self.list.unlink_node(node) catch {};
         }
 
         self.list.release_node(node);
     }
 
-    pub fn cancel_all(self: *BlockingTasksSet, loop: *Loop) void {
+    pub fn cancel_all(self: *BlockingTasksSet, loop: *Loop) !void {
         for (self.task_data_pool[0..self.index]) |*task| {
             switch (task.data) {
                 .callback => |*data| {
                     data.data.cancelled = true;
-                    Loop.Scheduling.Soon.dispatch_guaranteed(loop, data);
+                    try Loop.Scheduling.Soon.dispatch_guaranteed(loop, data);
                 },
                 .none => {}
             }
@@ -208,7 +208,7 @@ pub const BlockingTasksSet = struct {
         operation: BlockingOperation,
         callback: ?*const CallbackManager.Callback
     ) !*BlockingTask {
-        if (self.index == TotalTasksItems) @panic("Trying to push more items than allowed in BlockingTaksSet");
+        if (self.index == TotalTasksItems) return error.Overflow;
 
         try self.loop.reserve_slots(1);
 
@@ -373,15 +373,14 @@ pub fn traverse(self: *const IO, visit: python_c.visitproc, arg: ?*anyopaque) c_
 
 pub fn deinit(self: *IO) void {
 
-    self.set.cancel_all(self.loop);
+    self.set.cancel_all(self.loop) catch {};
     self.set.deinit();
-
     var node: ?BlockingTasksSetLinkedList.Node = self.busy_sets.first;
     while (node) |n| {
         node = n.next;
 
         const set = &n.data;
-        set.cancel_all(self.loop);
+        set.cancel_all(self.loop) catch {};
         set.deinit();
     }
     

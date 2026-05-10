@@ -160,7 +160,7 @@ fn fetch_completed_tasks(
                 v.data.io_uring_res = cqe.res;
 
                 blocking_task.check_result(err);
-                _ = ready_queue.try_append(v) orelse unreachable;
+                _ = ready_queue.try_append(v) orelse return error.Overflow;
                 self.reserved_slots -= 1;
             },
             .none => {}

@@ -57,7 +57,7 @@ fn set_future_exception(err: anyerror, future: *FutureObject) !void {
     utils.handle_zig_function_error(err, {});
     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
     const future_data = utils.get_data_ptr(Future, future);
-    Future.Python.Result.future_fast_set_exception(future, future_data, exc);
+    try Future.Python.Result.future_fast_set_exception(future, future_data, exc);
 }
 
 fn get_host_slice(data: *ServerCreationData) ![]const u8 {
@@ -359,9 +359,8 @@ fn z_create_server_socket(server_data: *ServerSocketData) !void {
         python_c.raise_python_runtime_error("Failed to bind to any address\x00");
         return error.PythonError;
     }
-
-    const future_data = utils.get_data_ptr(Future, creation_data.future.?);
-    Future.Python.Result.future_fast_set_result(future_data, servers_list);
+    const future_data = utils.get_data_ptr(Future, server_data.creation_data.future.?);
+    try Future.Python.Result.future_fast_set_result(future_data, servers_list);
     python_c.py_decref(servers_list);
 }
 

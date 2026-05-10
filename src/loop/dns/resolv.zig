@@ -130,11 +130,11 @@ pub const ControlData = struct {
             const loop = self.loop;
             for (self.user_callbacks.items) |*v| {
                 v.data.cancelled = true;
-                Loop.Scheduling.Soon.dispatch_guaranteed(loop, v);
+                Loop.Scheduling.Soon.dispatch_guaranteed(loop, v) catch {};
             }
         }
 
-        self.loop.dns.pending_queries.unlink_node(self.node);
+        self.loop.dns.pending_queries.unlink_node(self.node) catch {};
         self.arena.deinit();
         self.allocator.destroy(self);
     }
@@ -178,7 +178,7 @@ fn mark_resolved_and_execute_user_callbacks(server_data: *ServerQueryData) !void
 
     const loop = control_data.loop;
     for (control_data.user_callbacks.items) |*v| {
-        Loop.Scheduling.Soon.dispatch_guaranteed(loop, v);
+        try Loop.Scheduling.Soon.dispatch_guaranteed(loop, v);
     }
 }
 
