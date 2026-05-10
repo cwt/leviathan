@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 
 const Loop = @import("../main.zig");
 const utils = @import("utils");
+const python_c = @import("python_c");
 
 const Cache = @import("cache.zig");
 const Parsers = @import("parsers.zig");
