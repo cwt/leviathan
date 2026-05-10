@@ -301,18 +301,18 @@ pub const BlockingOperationData = union(BlockingOperation) {
     SocketAccept: Socket.AcceptData,
 };
 
-loop: *Loop,
+loop: *Loop = undefined,
 
-busy_sets: BlockingTasksSetLinkedList,
-set_node: BlockingTasksSetLinkedList.Node,
-set: *BlockingTasksSet,
+busy_sets: BlockingTasksSetLinkedList = undefined,
+set_node: BlockingTasksSetLinkedList.Node = undefined,
+set: *BlockingTasksSet = undefined,
 
-ring: std.os.linux.IoUring,
-ring_blocked: bool,
+ring: std.os.linux.IoUring = undefined,
+ring_blocked: bool = false,
 
-eventfd: std.posix.fd_t,
-eventfd_val: u64,
-blocking_ready_tasks: []std.os.linux.io_uring_cqe,
+eventfd: std.posix.fd_t = -1,
+eventfd_val: u64 = 0,
+blocking_ready_tasks: []std.os.linux.io_uring_cqe = &.{},
 
 pub fn init(self: *IO, loop: *Loop, allocator: std.mem.Allocator) !void {
     self.busy_sets = BlockingTasksSetLinkedList.init(allocator);

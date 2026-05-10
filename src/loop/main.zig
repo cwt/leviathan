@@ -78,11 +78,11 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
         .prepare_hooks = HooksList.init(allocator),
         .check_hooks = HooksList.init(allocator),
         .idle_hooks = HooksList.init(allocator),
-        .fs_watcher = undefined,
-        .child_watcher = undefined,
-        .unix_signals = undefined,
-        .io = undefined,
-        .dns = undefined,
+        .fs_watcher = .{},
+        .child_watcher = .{},
+        .unix_signals = .{},
+        .io = .{},
+        .dns = .{},
     };
     try self.fs_watcher.init(self);
     try self.child_watcher.init(self);

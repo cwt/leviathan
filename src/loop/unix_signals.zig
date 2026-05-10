@@ -14,10 +14,10 @@ const c = @cImport({
 
 const CallbacksBTree = utils.BTree(u6, CallbackManager.Callback, 3);
 
-callbacks: CallbacksBTree,
-fd: std.posix.fd_t,
-mask: std.posix.sigset_t,
-loop: *Loop,
+callbacks: CallbacksBTree = undefined,
+fd: std.posix.fd_t = -1,
+mask: std.posix.sigset_t = std.mem.zeroes(std.posix.sigset_t),
+loop: *Loop = undefined,
 
 blocking_task_id: usize = 0,
 

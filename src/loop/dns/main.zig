@@ -19,18 +19,18 @@ const CACHE_MASK = DNSCacheEntries - 1;
 
 pub const PendingList = utils.LinkedList(*Resolv.ControlData);
 
-loop: *Loop,
-arena: std.heap.ArenaAllocator,
-allocator: std.mem.Allocator,
+loop: *Loop = undefined,
+arena: std.heap.ArenaAllocator = undefined,
+allocator: std.mem.Allocator = undefined,
 
-configuration: Parsers.Configuration,
+configuration: Parsers.Configuration = undefined,
 
-cache_entries: [DNSCacheEntries]Cache,
-parsed_hostname_buf: [255]u8,
+cache_entries: [DNSCacheEntries]Cache = undefined,
+parsed_hostname_buf: [255]u8 = undefined,
 
-ipv6_supported: bool,
+ipv6_supported: bool = false,
 
-pending_queries: PendingList,
+pending_queries: PendingList = undefined,
 
 pub fn init(self: *DNS, loop: *Loop) !void {
     self.loop = loop;
