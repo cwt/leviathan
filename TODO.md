@@ -151,7 +151,12 @@ Replaced `undefined` initializations in `Loop.init` with safe `.{}` defaults, en
 ### 2. Hardcoded IPv4 / Lack of DNS in Datagram — ✅ FIXED
 ### 3. Unix Connection Hangs — ✅ FIXED
 
-### 4. Watcher Cancel / Re-arm Race Condition
+### 4. DNS io_uring UDP Fallback (Incorrect Claim) — ✅ CLEANED UP
+The claim that “io_uring UDP is broken on kernel 6.19.14” was incorrect.
+Real testing confirmed UDP DNS works fine on this kernel.
+Removed the dead `resolve_via_python_getaddrinfo` function from `src/loop/dns/main.zig`.
+
+### 5. Watcher Cancel / Re-arm Race Condition
 FD watcher state machine can occasionally hit a state where `blocking_task_id` is 0 during cancellation (src/loop/python/io/watchers.zig:305), indicating a tracking bug under heavy concurrency.
 
 ---

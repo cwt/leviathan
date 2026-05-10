@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 
 const Loop = @import("../main.zig");
 const utils = @import("utils");
-const python_c = @import("python_c");
 
 const Cache = @import("cache.zig");
 const Parsers = @import("parsers.zig");
@@ -136,82 +135,6 @@ pub fn reverse_lookup(
     }
 
     try Resolv.queue(cache_slot, self.loop, name, callback, self.configuration, false, .ptr);
-}
-
-fn resolve_via_python_getaddrinfo(hostname: []const u8) ![]std.net.Address {
-    // Build Python hostname string
-    const py_host = python_c.PyUnicode_FromStringAndSize(hostname.ptr, @intCast(hostname.len))
-        orelse return error.PythonError;
-    defer python_c.py_decref(py_host);
-
-    // Call socket.getaddrinfo(hostname, 0)
-    const socket_module = python_c.PyImport_ImportModule("socket\x00") orelse
-        return error.PythonError;
-    defer python_c.py_decref(socket_module);
-
-    const getaddrinfo_func = python_c.PyObject_GetAttrString(socket_module, "getaddrinfo\x00")
-        orelse return error.PythonError;
-    defer python_c.py_decref(getaddrinfo_func);
-
-    const py_port = python_c.PyLong_FromLong(0) orelse return error.PythonError;
-    defer python_c.py_decref(py_port);
-
-    const args = python_c.PyTuple_Pack(2, py_host, py_port) orelse return error.PythonError;
-    defer python_c.py_decref(args);
-
-    const result = python_c.PyObject_CallObject(getaddrinfo_func, args) orelse
-        return error.PythonError;
-    defer python_c.py_decref(result);
-
-    if (python_c.PyList_Check(result) <= 0) return error.PythonError;
-
-    const list_len = python_c.PyList_Size(result);
-    if (list_len == 0) return error.PythonError;
-
-    const gpa = std.heap.c_allocator;
-    var addresses = std.ArrayList(std.net.Address){};
-    errdefer addresses.deinit(gpa);
-
-    var i: isize = 0;
-    while (i < list_len) : (i += 1) {
-        const item = python_c.PyList_GetItem(result, i) orelse continue;
-        if (python_c.PyTuple_Check(item) <= 0) continue;
-        if (python_c.PyTuple_Size(item) < 5) continue;
-
-        const family_obj = python_c.PyTuple_GetItem(item, 0) orelse continue;
-        const sockaddr_obj = python_c.PyTuple_GetItem(item, 4) orelse continue;
-
-        const family = python_c.PyLong_AsLong(family_obj);
-        if (family == -1 and python_c.PyErr_Occurred() != null) {
-            python_c.PyErr_Clear();
-            continue;
-        }
-
-        if (family == std.posix.AF.INET) {
-            if (python_c.PyTuple_Size(sockaddr_obj) < 2) continue;
-            const host_obj = python_c.PyTuple_GetItem(sockaddr_obj, 0) orelse continue;
-            const host_bytes = python_c.PyUnicode_AsUTF8(host_obj) orelse continue;
-            const host_str = std.mem.span(host_bytes);
-            if (std.net.Address.parseIp(host_str, 0)) |addr| {
-                try addresses.append(gpa, addr);
-            } else |_| {}
-        } else if (family == std.posix.AF.INET6) {
-            if (python_c.PyTuple_Size(sockaddr_obj) < 4) continue;
-            const host_obj = python_c.PyTuple_GetItem(sockaddr_obj, 0) orelse continue;
-            const host_bytes = python_c.PyUnicode_AsUTF8(host_obj) orelse continue;
-            const host_str = std.mem.span(host_bytes);
-            if (std.net.Address.parseIp6(host_str, 0)) |addr| {
-                try addresses.append(gpa, addr);
-            } else |_| {}
-        }
-    }
-
-    if (addresses.items.len == 0) return error.PythonError;
-
-    return addresses.toOwnedSlice(gpa) catch {
-        addresses.deinit(gpa);
-        return error.OutOfMemory;
-    };
 }
 
 pub fn deinit(self: *DNS) void {
