@@ -127,21 +127,21 @@ Implement abstraction layer for `io_uring` and add backends for:
 
 ---
 
-## 🟡 PRIORITY 6: Long-term Risk Mitigation
+## 🟢 PRIORITY 6: Long-term Risk Mitigation — ✅ DONE (2026-05-10)
 
 Maintenance hazards and concurrency risks discovered during architectural audit.
 
-### 6.1 — Eliminate PyTuple_SetItem Ref-Stealing Leaks
-Replace `PyTuple_SetItem` with `PyTuple_Pack` or wrap in helpers to ensure references are correctly handled on all error paths. Affects `create_connection.zig`, `unix.zig`, and `socket/ops.zig`.
+### 6.1 — Eliminate PyTuple_SetItem Ref-Stealing Leaks — ✅ DONE (2026-05-10)
+Replaced `PyTuple_SetItem` with `PyTuple_Pack` or wrapped in helpers to ensure references are correctly handled on all error paths. Affected `create_connection.zig`, `unix.zig`, `socket/ops.zig`, `datagram/main.zig`, and `subprocess/exec.zig`.
 
-### 6.2 — Automated GC Traversal Checks
-Add compile-time or test-time assertions to ensure the `traverse` functions for complex structs (like `SocketCreationData`) stay in sync with their field definitions.
+### 6.2 — Automated GC Traversal Checks — ✅ DONE (2026-05-10)
+Added `verify_gc_coverage` compile-time assertions to ensure the `traverse` functions for complex structs stay in sync with their field definitions. Enhanced `py_visit` to generically visit all PyObject subclasses.
 
-### 6.3 — DNS Arena Cleanup Consistency
-Audit all async DNS paths to ensure `ArenaAllocator` is consistently deinitialized via `errdefer` or a single `release()` point, preventing small leaks on failed lookups.
+### 6.3 — DNS Arena Cleanup Consistency — ✅ DONE (2026-05-10)
+Audited all async DNS paths and refactored `DNS.deinit` to properly release pending queries. Fixed critical `reserved_slots` leaks and group dispatch imbalances.
 
-### 6.4 — Safe Initialization of Loop Fields
-Replace `undefined` initializations in `Loop.init` with safe default/zeroed values (`.{}`) to ensure GC or deinit never see indeterminate state during partial failures.
+### 6.4 — Safe Initialization of Loop Fields — ✅ DONE (2026-05-10)
+Replaced `undefined` initializations in `Loop.init` with safe `.{}` defaults, ensuring deterministic state during partial failures.
 
 ---
 
