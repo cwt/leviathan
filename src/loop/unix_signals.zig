@@ -52,7 +52,7 @@ fn signal_handler(data: *const CallbackManager.CallbackData) !void {
     const callback = loop.unix_signals.callbacks.get_value_ptr(@intCast(sig), null).?;
     python_c.py_incref(@alignCast(@ptrCast(callback.data.user_data.?)));
 
-    try Loop.Scheduling.Soon.dispatch(loop, &callback);
+    try Loop.Scheduling.Soon.dispatch(loop, callback);
 
     const buffer_to_read: std.os.linux.IoUring.ReadBuffer = .{
         .buffer = @as([*]u8, @ptrCast(&loop.unix_signals.signalfd_info))[0..@sizeOf(std.os.linux.signalfd_siginfo)],
@@ -130,7 +130,7 @@ pub fn link(self: *UnixSignals, sig: u6, callback: CallbackManager.Callback) !vo
     var prev_callback = self.callbacks.replace(sig, callback);
     if (prev_callback) |*v| {
         v.data.cancelled = true;
-        try Loop.Scheduling.Soon.dispatch(self.loop, v);
+        try Loop.Scheduling.Soon.dispatch_nonthreadsafe(self.loop, v);
     }else{
         try self.loop.reserve_slots(1);
     }
@@ -140,7 +140,7 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
     var callback_info = self.callbacks.delete(sig);
     if (callback_info) |*v| {
         v.data.cancelled = true;
-        try Loop.Scheduling.Soon.dispatch_guaranteed(self.loop, v);
+        try Loop.Scheduling.Soon.dispatch_guaranteed_nonthreadsafe(self.loop, v);
     }else{
         return error.KeyNotFound;
     }
