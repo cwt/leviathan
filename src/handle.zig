@@ -112,8 +112,33 @@ pub inline fn fast_new_handle(
     return instance;
 }
 
+fn handle_traverse(self: ?*PythonHandleObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
+    const instance = self.?;
+
+    const vret = python_c.py_visit(instance, visit, arg);
+    if (vret != 0) return vret;
+
+    if (instance.py_callback_args) |args_ptr| {
+        for (args_ptr[0..instance.py_callback_len]) |arg_item| {
+            const vret2 = visit.?(arg_item, arg);
+            if (vret2 != 0) return vret2;
+        }
+    }
+
+    return 0;
+}
+
+fn handle_clear(self: ?*PythonHandleObject) callconv(.c) c_int {
+    const instance = self.?;
+    python_c.py_decref_and_set_null(&instance.contextvars);
+    python_c.py_decref_and_set_null(&instance.py_callback);
+    return 0;
+}
+
 fn handle_dealloc(self: ?*PythonHandleObject) callconv(.c) void {
     const instance = self.?;
+    python_c.PyObject_GC_UnTrack(instance);
+
     python_c.py_decref_and_set_null(&instance.contextvars);
     python_c.py_decref_and_set_null(&instance.py_callback);
 
@@ -252,10 +277,12 @@ pub var PythonHandleType = python_c.PyTypeObject{
     .tp_doc = "Leviathan's handle class\x00",
     .tp_basicsize = @sizeOf(PythonHandleObject),
     .tp_itemsize = 0,
-    .tp_flags = python_c.Py_TPFLAGS_DEFAULT | python_c.Py_TPFLAGS_BASETYPE,
+    .tp_flags = python_c.Py_TPFLAGS_DEFAULT | python_c.Py_TPFLAGS_BASETYPE | python_c.Py_TPFLAGS_HAVE_GC,
     .tp_new = &python_c.PyType_GenericNew,
     .tp_init = @ptrCast(&handle_init),
     .tp_dealloc = @ptrCast(&handle_dealloc),
+    .tp_traverse = @ptrCast(&handle_traverse),
+    .tp_clear = @ptrCast(&handle_clear),
     .tp_methods = @constCast(PythonhandleMethods.ptr),
     .tp_members = null
 };
