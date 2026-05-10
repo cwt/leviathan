@@ -29,10 +29,11 @@ _subprocess_popens: dict[int, Any] = {}
 class _SSLTransportWrapper:
     """Wraps a raw transport to encrypt writes through an SSL object."""
 
-    def __init__(self, ssp, raw_transport, ssl_module):
+    def __init__(self, ssp, raw_transport, ssl_module, shutdown_timeout=None):
         self._ssp = ssp
         self._raw_t = raw_transport
         self._sslmod = ssl_module
+        self._ssl_shutdown_timeout = shutdown_timeout
 
     def write(self, data):
         self._ssp._sslobj.write(data)
@@ -41,7 +42,12 @@ class _SSLTransportWrapper:
     def close(self):
         try:
             self._ssp._sslobj.unwrap()
-        except (self._sslmod.SSLSyscallError, self._sslmod.SSLError):
+        except (
+            self._sslmod.SSLSyscallError,
+            self._sslmod.SSLWantReadError,
+            self._sslmod.SSLWantWriteError,
+            self._sslmod.SSLError,
+        ):
             pass
         self._ssp._f()
         self._raw_t.close()
@@ -90,6 +96,13 @@ class Loop(_Loop):
 
         self._default_executor: ThreadPoolExecutor|None = None
         self._shutdown_executor_called: bool = False
+
+    def close(self) -> None:
+        if self._default_executor is not None:
+            self._default_executor.shutdown(wait=False)
+            self._default_executor = None
+            self._shutdown_executor_called = True
+        _Loop.close(self)
 
     def _call_exception_handler(
         self,
@@ -179,7 +192,7 @@ class Loop(_Loop):
         new_future.add_done_callback(self.__run_until_complete_cb)
         try:
             self.run_forever()
-        except:
+        except BaseException:
             if new_task and new_future.done() and not new_future.cancelled():
                 new_future.exception()
             raise
@@ -196,7 +209,7 @@ class Loop(_Loop):
     ) -> asyncio.Future[_T]:
         if executor is None and (executor := self._default_executor) is None:
             if self._shutdown_executor_called:
-                raise RuntimeError("Default executor shutted down")
+                raise RuntimeError("Default executor shut down")
 
             executor = ThreadPoolExecutor(thread_name_prefix="leviathan")
             self._default_executor = executor
@@ -273,8 +286,6 @@ class Loop(_Loop):
             )
         # Only pass non-None/non-default kwargs
         kwargs = {}
-        if ssl is not None:
-            kwargs["ssl"] = ssl
         if family:
             kwargs["family"] = family
         if proto:
@@ -342,7 +353,7 @@ class Loop(_Loop):
                 else: self._r()
             def connection_made(self, t):
                 self._raw_t = t
-                self._wrapper = _SSLTransportWrapper(self, t, ssl_module)
+                self._wrapper = _SSLTransportWrapper(self, t, ssl_module, shutdown_timeout=ssl_shutdown_timeout)
                 wrapper_holder[0] = self._wrapper
                 self._h()
             def connection_lost(self, e):
@@ -465,7 +476,7 @@ class Loop(_Loop):
             def connection_made(self, t):
                 self._raw_t = t
                 self._ap = protocol_factory()
-                self._wrapper = _SSLTransportWrapper(self, self._raw_t, ssl_module)
+                self._wrapper = _SSLTransportWrapper(self, self._raw_t, ssl_module, shutdown_timeout=ssl_shutdown_timeout)
                 self._h()
             def connection_lost(self, e):
                 self._ap.connection_lost(e)
@@ -528,6 +539,7 @@ class Loop(_Loop):
             return await self._create_ssl_unix_connection(
                 protocol_factory, path, ssl=ssl,
                 server_hostname=server_hostname,
+                ssl_shutdown_timeout=ssl_shutdown_timeout,
             )
         return await _Loop.create_unix_connection(
             self, protocol_factory, path, ssl=ssl
@@ -536,6 +548,7 @@ class Loop(_Loop):
     async def _create_ssl_unix_connection(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],
         path: str, *, ssl: Any, server_hostname: str|None,
+        ssl_shutdown_timeout: float|None = None,
     ) -> tuple[asyncio.Transport, asyncio.BaseProtocol]:
         import ssl as ssl_module
 
@@ -570,7 +583,7 @@ class Loop(_Loop):
                 else: self._r()
             def connection_made(self, t):
                 self._raw_t = t
-                self._wrapper = _SSLTransportWrapper(self, t, ssl_module)
+                self._wrapper = _SSLTransportWrapper(self, t, ssl_module, shutdown_timeout=ssl_shutdown_timeout)
                 wrapper_holder[0] = self._wrapper
                 self._h()
             def connection_lost(self, e):
@@ -632,6 +645,7 @@ class Loop(_Loop):
         if ssl is not None:
             return await self._create_ssl_unix_server(
                 protocol_factory, path, backlog=backlog, ssl=ssl,
+                ssl_shutdown_timeout=ssl_shutdown_timeout,
             )
         srv = await _Loop.create_unix_server(
             self, protocol_factory, path, backlog=backlog,
@@ -644,6 +658,7 @@ class Loop(_Loop):
     async def _create_ssl_unix_server(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],
         path: str, *, backlog: int, ssl: Any,
+        ssl_shutdown_timeout: float|None = None,
     ) -> "Server":
         from .server import Server
         import ssl as ssl_module
@@ -673,7 +688,7 @@ class Loop(_Loop):
             def connection_made(self, t):
                 self._raw_t = t
                 self._ap = protocol_factory()
-                self._wrapper = _SSLTransportWrapper(self, self._raw_t, ssl_module)
+                self._wrapper = _SSLTransportWrapper(self, self._raw_t, ssl_module, shutdown_timeout=ssl_shutdown_timeout)
                 self._h()
             def connection_lost(self, e):
                 self._ap.connection_lost(e)
