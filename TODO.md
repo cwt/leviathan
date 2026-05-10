@@ -165,18 +165,25 @@ FD watcher state machine can occasionally hit a state where `blocking_task_id` i
 
 Critical and high-priority bugs discovered during deep code analysis.
 
-### 7.1 — Watcher Replacement Memory Leak — 🔴 CRITICAL
+### 7.1 — Watcher Replacement Double-Fire — 🔴 CRITICAL
 **File:** `src/loop/python/io/watchers.zig:203-209`
 
-When replacing an existing FD watcher:
-- Old `FDWatcher` struct is fetched via `watchers.get_value(fd, null)`
-- Only the `handle` (PyObject) is decref'd
-- The struct pointer allocated via `allocator.create(Loop.FDWatcher)` is **never freed**
-- `insert()` in BTree just overwrites without returning old value
+**Analysis:** The original claim of "memory leak" was incorrect — the `FDWatcher` struct is reused (not leaked), and `loop_watchers_cleanup_callback` properly frees it (line 32). The actual bug is a **potential double-fire**:
 
-**Impact:** With Python's high-frequency socket open/close, leaks allocator memory and PythonHandleObject.
+When replacing a watcher (e.g. `add_reader(fd, cb2)` after `add_reader(fd, cb1)`):
+- The old in-flight `io_uring` operation was **never cancelled**
+- The handle was swapped, but the old IO operation still completed via the same struct
+- The new callback would fire **twice**: once from the old IO completion, once from the re-armed IO
+- In testing, this caused a **segfault** during `loop.close()` due to the old IO completing on a repurposed struct at shutdown
 
-**Fix needed:** Use `watchers.replace()` instead of `insert()` to get old value for cleanup, or manually delete + free before insert.
+**Fix applied:**
+1. Remove old watcher from hash map via `watchers.delete(fd)`
+2. Cancel old in-flight IO op (set `fd = -1` so cancel cleanup skips hash map)
+3. If no in-flight IO, clean up the old struct immediately
+4. Fall through to allocate a **new** `FDWatcher` struct, insert into hash map, and queue fresh IO
+5. Added `test_rewrite_reader_old_callback_not_called` in `tests/loop/test_loop_watchers.py`
+
+**Test results:** 191/191 internal tests + standard asyncio suite pass across all 4 Python versions (3.13, 3.14, 3.13t, 3.14t) + Zig unit tests.
 
 ### 7.2 — Subprocess PIDs Never Cleaned on Success — 🔴 CRITICAL
 **File:** `leviathan/loop.py:727-744`

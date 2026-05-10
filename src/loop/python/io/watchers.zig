@@ -202,11 +202,19 @@ inline fn z_loop_add_watcher(
 
     const existing_watcher_ptr: ?*Loop.FDWatcher = watchers.get_value(fd, null);
     if (existing_watcher_ptr) |existing_watcher_data| {
-        const prev_handle = existing_watcher_data.handle;
-        python_c.py_decref(@ptrCast(prev_handle));
+        // Remove old watcher from hash map
+        _ = watchers.delete(fd);
 
-        existing_watcher_data.handle = watcher_data.handle;
-        return python_c.get_py_none();
+        // Cancel in-flight IO; cleanup callback will free the struct & decref handle
+        if (existing_watcher_data.blocking_task_id != 0) {
+            existing_watcher_data.fd = -1;
+            _ = try loop_data.io.queue(.{ .Cancel = existing_watcher_data.blocking_task_id });
+        } else {
+            // No in-flight IO, clean up directly
+            python_c.py_decref(@ptrCast(existing_watcher_data.handle));
+            allocator.destroy(existing_watcher_data);
+        }
+        // Fall through to create a new watcher with the new handle
     }
 
     const watcher_data_ptr = try allocator.create(Loop.FDWatcher);

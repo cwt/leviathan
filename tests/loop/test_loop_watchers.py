@@ -116,7 +116,36 @@ def test_rewrite_reader() -> None:
         loop.call_soon(lambda: os.write(w, b"data"))
         loop.run_forever()
 
-        assert callback_count == 10, "Second reader callback was not called"
+        assert callback_count == 10, "Second reader callback was not called or old callback also fired"
+    finally:
+        loop.close()
+        os.close(w)
+        os.close(r)
+
+def test_rewrite_reader_old_callback_not_called() -> None:
+    loop = Loop()
+    r, w = os.pipe2(os.O_NONBLOCK)
+    try:
+        old_called = False
+        new_called = False
+
+        def old_cb() -> None:
+            nonlocal old_called
+            old_called = True
+
+        def new_cb() -> None:
+            nonlocal new_called
+            new_called = True
+            loop.stop()
+
+        loop.add_reader(r, old_cb)
+        loop.add_reader(r, new_cb)
+
+        loop.call_soon(lambda: os.write(w, b"data"))
+        loop.run_forever()
+
+        assert not old_called, "Old callback was called after replacement"
+        assert new_called, "New callback was not called after replacement"
     finally:
         loop.close()
         os.close(w)
