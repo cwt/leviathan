@@ -64,7 +64,8 @@ run_tests() {
         cmd="$py"
     fi
     if PYTHONPATH=. $cmd -m pytest tests/ \
-        -q; then
+        -q \
+        --cov=leviathan --cov-report=term --cov-report=html --cov-config=.coveragerc; then
         printf "${GREEN}[%s] PASS${NC}\n" "$label"
         PASS=$((PASS + 1))
         return 0
@@ -161,17 +162,28 @@ for py in python3.13 python3.14 python3.13t python3.14t; do
 done
 
 # ---- zig tests ----
-printf "${YELLOW}[zig]${NC} Running zig unit tests...\n"
 REF_INC="$(get_python_include python3.13)"
 REF_LIB="$(get_python_lib python3.13)"
-if zig build test \
-    -Dpython-include-dir="$REF_INC" \
-    -Dpython-lib-dir="$(dirname "$REF_LIB")" \
-    -Dpython-lib="$REF_LIB" 2>/dev/null; then
+ZIG_OPTS="-Dpython-include-dir=$REF_INC -Dpython-lib-dir=$(dirname "$REF_LIB") -Dpython-lib=$REF_LIB"
+
+printf "${YELLOW}[zig]${NC} Running zig unit tests...\n"
+if zig build test $ZIG_OPTS 2>/dev/null; then
     printf "${GREEN}[zig] PASS${NC}\n"
 else
     printf "${RED}[zig] FAIL${NC}\n"
     FAIL=$((FAIL + 1))
+fi || true
+
+printf "${YELLOW}[zig coverage]${NC} Building test objects for coverage...\n"
+if zig build test-objects $ZIG_OPTS 2>/dev/null; then
+    printf "${YELLOW}[zig coverage]${NC} Running under kcov...\n"
+    mkdir -p coverage/zig
+    for bin in leviathan utils callback_manager; do
+        kcov --include-pattern="$ROOT/src/" coverage/zig/$bin zig-out/bin/$bin >/dev/null 2>&1
+    done
+    printf "${GREEN}[zig coverage]${NC} Reports in coverage/zig/\n"
+else
+    printf "${RED}[zig coverage]${NC} BUILD FAILED\n"
 fi || true
 
 echo ""

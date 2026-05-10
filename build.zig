@@ -186,4 +186,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_leviathan_module_unit_tests.step);
     test_step.dependOn(&run_callback_manager_unit_tests.step);
     test_step.dependOn(&run_utils_unit_tests.step);
+
+    const install_leviathan_tests = b.addInstallArtifact(leviathan_module_unit_tests, .{ .dest_dir = .{ .override = .{ .custom = "bin" } } });
+    const install_callback_manager_tests = b.addInstallArtifact(callback_manager_unit_tests, .{ .dest_dir = .{ .override = .{ .custom = "bin" } } });
+    const install_utils_tests = b.addInstallArtifact(utils_unit_tests, .{ .dest_dir = .{ .override = .{ .custom = "bin" } } });
+
+    const test_objects_step = b.step("test-objects", "Build test artifacts (no run)");
+    test_objects_step.dependOn(&install_leviathan_tests.step);
+    test_objects_step.dependOn(&install_callback_manager_tests.step);
+    test_objects_step.dependOn(&install_utils_tests.step);
 }

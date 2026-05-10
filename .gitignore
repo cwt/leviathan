@@ -16,6 +16,8 @@ vgcore.*
 *.pyc
 *.so
 
+coverage/
+
 .envrc
 .direnv
 .aider*

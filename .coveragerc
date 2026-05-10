@@ -1,0 +1,15 @@
+[run]
+source = leviathan
+omit = leviathan/leviathan_zig*
+
+[html]
+directory = coverage/py
+title = Leviathan Python Coverage
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
