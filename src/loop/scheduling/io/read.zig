@@ -64,7 +64,7 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
             var msghr = comptime std.mem.zeroes(std.posix.msghdr);
 
             switch (data.data) {
-                .buffer_selection => @panic("TODO"),
+                .buffer_selection => return error.NotImplemented,
                 .iovecs => |iovecs| {
                     msghr.iov = @constCast(iovecs.ptr);
                     msghr.iovlen = @intCast(iovecs.len);

@@ -135,7 +135,7 @@ pub fn task_dealloc(self: ?*PythonTaskObject) callconv(.c) void {
     python_c.PyObject_GC_UnTrack(instance);
     _ = task_clear(instance);
 
-    const @"type": *python_c.PyTypeObject = @ptrCast(python_c.Py_TYPE(@ptrCast(instance)) orelse unreachable);
+    const @"type": *python_c.PyTypeObject = @ptrCast(python_c.Py_TYPE(@ptrCast(instance)) orelse return);
     @"type".tp_free.?(@ptrCast(instance));
 }
 

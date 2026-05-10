@@ -22,7 +22,7 @@ pub const Record = struct {
             .pending => null,
             .resolved => |d| d,
             .ptr => null,
-            .none => @panic("Attempt to get data from empty record")
+            .none => null
         };
     }
 

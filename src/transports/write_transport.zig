@@ -135,9 +135,7 @@ pub fn force_close(self: *WriteTransport) !void {
 }
 
 pub fn deinit(self: *WriteTransport) void {
-    if (!self.initialized) {
-        @panic("WriteTransport is not initialized");
-    }
+    if (!self.initialized) return;
 
     if (self.loop.initialized) {
         if (self.prepare_hook_node) |node| {

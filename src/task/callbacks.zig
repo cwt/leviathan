@@ -26,9 +26,10 @@ pub const LeviathanPyTaskWakeupMethod = python_c.PyMethodDef{
 
 inline fn set_fut_waiter(
     task: *Task.PythonTaskObject, future: PyObject
-) void {
+) !void {
     if (task.fut_waiter) |_| {
-        @panic("task.fut_waiter is not null");
+        python_c.raise_python_runtime_error("Task is already awaiting another future\x00");
+        return error.PythonError;
     }else{
         task.fut_waiter = python_c.py_newref(future);
     }
@@ -174,7 +175,8 @@ inline fn handle_legacy_future_object(
             return error.PythonError;
         }
 
-        set_fut_waiter(task, future);
+        try set_fut_waiter(task,
+ future);
         if (task.must_cancel) {
             return cancel_future_object(task, future);
         }
@@ -224,7 +226,8 @@ inline fn handle_leviathan_future_object(
         });
         python_c.py_incref(@ptrCast(task));
 
-        set_fut_waiter(task, @ptrCast(future));
+        try set_fut_waiter(task,
+ @ptrCast(future));
         future.blocking = 0;
 
         if (task.must_cancel) {
@@ -278,10 +281,10 @@ fn failed_execution(task: *Task.PythonTaskObject) !void {
 
     if (exc_match(exception, python_c.PyExc_StopIteration) > 0) {
         const stop_iteration: *python_c.PyStopIterationObject = @ptrCast(exception);
-        set_result(task, future_data, stop_iteration.value orelse unreachable) catch |err| {
+        set_result(task, future_data, stop_iteration.value orelse return error.PythonError) catch |err| {
             utils.handle_zig_function_error(err, {});
 
-            const exc = python_c.PyErr_Occurred() orelse unreachable;
+            const exc = python_c.PyErr_Occurred() orelse return error.PythonError;
             python_c.PyException_SetCause(exc, exception);
 
             return error.PythonError;
@@ -296,7 +299,7 @@ fn failed_execution(task: *Task.PythonTaskObject) !void {
         _ = Future.Python.Cancel.future_fast_cancel(fut, future_data, null) catch |err| {
             utils.handle_zig_function_error(err, {});
 
-            const exc = python_c.PyErr_Occurred() orelse unreachable;
+            const exc = python_c.PyErr_Occurred() orelse return error.PythonError;
             python_c.PyException_SetCause(exc, exception);
 
             return error.PythonError;

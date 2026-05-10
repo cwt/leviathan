@@ -239,7 +239,7 @@ fn check_send_operation_result(data: *const CallbackManager.CallbackData) !void 
             },
         };
     } else {
-        unreachable;
+        return error.UnexpectedState;
     }
 
     _ = try server_data.loop.io.queue(operation_data);

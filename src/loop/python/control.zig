@@ -29,13 +29,13 @@ inline fn z_loop_run_forever(self: *LoopObject) !PyObject {
     var py_exception: ?PyObject = null;
     Loop.Runner.start(loop_data, self) catch |err| {
         utils.handle_zig_function_error(err, {});
-        py_exception = python_c.PyErr_GetRaisedException() orelse unreachable;
+        py_exception = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
     };
 
     if (python_c.PyObject_CallOneArg(set_running_loop, python_c.get_py_none_without_incref())) |v| {
         python_c.py_decref(v);
     }else{
-        const py_exc = python_c.PyErr_GetRaisedException() orelse unreachable;
+        const py_exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
         if (py_exception) |v| {
             python_c.PyException_SetCause(py_exc, v);
         }

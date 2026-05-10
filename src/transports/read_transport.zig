@@ -101,9 +101,7 @@ pub fn force_close(self: *ReadTransport) !void {
 }
 
 pub fn deinit(self: *ReadTransport) void {
-    if (!self.initialized) {
-        @panic("ReadTransport is not initialized");
-    }
+    if (!self.initialized) return;
 
     const allocator = self.loop.allocator;
     allocator.free(self.buffer);

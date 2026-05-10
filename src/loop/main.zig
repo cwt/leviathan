@@ -169,10 +169,7 @@ pub fn remove_hook(self: *Loop, hook_type: HookType, node: HooksList.Node) void 
         .check => &self.check_hooks,
         .idle => &self.idle_hooks,
     };
-    hooks.unlink_node(node) catch |err| {
-        if (err == utils.LinkedList(CallbackManager.Callback).errors.LinkedListEmpty) return;
-        unreachable;
-    };
+    hooks.unlink_node(node) catch {};
     hooks.release_node(node);
 }
 

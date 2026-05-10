@@ -418,7 +418,7 @@ fn interleave_address_list(allocator: std.mem.Allocator, address_list: []std.net
                 tmp_list[address_list.len + ipv6_addresses] = address.*;
                 ipv6_addresses += 1;
             },
-            else => unreachable
+            else => return error.InvalidOperation
         }
     }
 
