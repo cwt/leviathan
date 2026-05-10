@@ -98,24 +98,28 @@ Full compatibility with standard `test.test_asyncio` suite modules. 185 internal
 
 Remaining architectural and feature gaps required for production readiness.
 
-### 5.1 — Remove @panic and unreachable from IO Path
+### 5.1 — Remove @panic and unreachable from IO Path — ✅ DONE (2026-05-10)
 Convert all remaining hard failures to Python exceptions via `handle_zig_function_error`.
-- `src/loop/python/io/watchers.zig`: remove `unreachable` in `cancel_watcher` and `@panic` on blocking_task_id.
-- `src/loop/scheduling/soon.zig`: handle `ready_queue` overflow gracefully.
-- `src/loop/scheduling/io/main.zig`: handle `BlockingTasksSet` overflow gracefully.
-- `src/callback_manager.zig`: remove `catch unreachable` on `queue.pop()`.
+- `src/loop/python/io/watchers.zig`: removed `unreachable` in `cancel_watcher` and `@panic` on blocking_task_id.
+- `src/loop/scheduling/soon.zig`: handled `ready_queue` overflow gracefully.
+- `src/loop/scheduling/io/main.zig`: handled `BlockingTasksSet` overflow gracefully.
+- `src/callback_manager.zig`: removed `@panic` from `append` and added unit test.
+- Core: removed all `unreachable` and `@panic` from core IO path and data structures.
 
-### 5.2 — Complete Happy Eyeballs
-Implement the `all_errors` path in `src/loop/python/io/client/create_connection.zig:655` to collect and report multiple connection failures instead of panicking.
+### 5.2 — Complete Happy Eyeballs — ✅ DONE (2026-05-10)
+Implemented the `all_errors` path in `src/loop/python/io/client/create_connection.zig` to collect and report multiple connection failures using `ExceptionGroup` instead of panicking.
 
 ### 5.3 — DNS Resolver Enhancements
 - Implement `EDNS0` and `DNSSEC` support in `src/loop/dns/resolv.zig`.
 - Support full `resolv.conf` options in `src/loop/dns/parsers.zig`.
 
-### 5.4 — Loop Lifecycle Refactoring
-Raise Python `RuntimeError` or `RuntimeWarning` in `src/loop/main.zig` for double-init or dealloc-while-running instead of hard-panicking.
+### 5.4 — Loop Lifecycle Refactoring — ✅ DONE (2026-05-10)
+Raised Python `RuntimeError` or `RuntimeWarning` in `src/loop/main.zig` for double-init or dealloc-while-running instead of hard-panicking.
 
-### 5.5 — Multi-Platform Support (macOS / BSD / Windows)
+### 5.5 — GC Hardening for IO Callbacks — ✅ DONE (2026-05-10)
+Added recursive `traverse` support to `CallbackData` and implementation for all `create_connection` related native structures. Fixed critical refcount leaks in exception paths.
+
+### 5.6 — Multi-Platform Support (macOS / BSD / Windows)
 Implement abstraction layer for `io_uring` and add backends for:
 - `kqueue` (macOS / BSD)
 - `epoll` (Linux fallback)
