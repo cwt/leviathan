@@ -374,23 +374,31 @@ pub fn py_visit(object: anytype, visit: Python.visitproc, arg: ?*anyopaque) c_in
     const fields = comptime std.meta.fields(@typeInfo(@TypeOf(object)).pointer.child);
     loop: inline for (fields) |field| {
         const field_name = field.name;
+
+        // Skip standard header
+        if (comptime std.mem.eql(u8, field_name, "ob_base")) continue;
+
         const value: ?*Python.PyObject = switch (@typeInfo(field.type)) {
             .optional => |data| blk: {
                 switch (@typeInfo(data.child)) {
                     .pointer => |data2| {
-                        if (data2.child != Python.PyObject) {
-                            continue :loop;
+                        if (data2.child == Python.PyObject) {
+                            break :blk @field(object, field_name);
+                        } else if (@typeInfo(data2.child) == .@"struct" and @hasField(data2.child, "ob_base")) {
+                            break :blk @ptrCast(@field(object, field_name));
                         }
-                        break :blk @field(object, field_name);
+                        continue :loop;
                     },
                     else => continue :loop
                 }
             },
             .pointer => |data| blk: {
-                if (data.child != Python.PyObject) {
-                    continue :loop;
+                if (data.child == Python.PyObject) {
+                    break :blk @field(object, field_name);
+                } else if (@typeInfo(data.child) == .@"struct" and @hasField(data.child, "ob_base")) {
+                    break :blk @ptrCast(@field(object, field_name));
                 }
-                break :blk @field(object, field_name);
+                continue :loop;
             },
             .@"struct" => {
                 const vret = py_visit(&@field(object, field_name), visit, arg);
@@ -412,6 +420,45 @@ pub fn py_visit(object: anytype, visit: Python.visitproc, arg: ?*anyopaque) c_in
     }
 
     return 0;
+}
+
+pub fn verify_gc_coverage(comptime T: type, comptime excluded: []const []const u8) void {
+    const info = @typeInfo(T);
+    const fields = if (info == .pointer) std.meta.fields(info.pointer.child) else std.meta.fields(T);
+    
+    inline for (fields) |field| {
+        const field_name = field.name;
+        if (comptime std.mem.eql(u8, field_name, "ob_base")) continue;
+        
+        var is_excluded = false;
+        inline for (excluded) |ex| {
+            if (comptime std.mem.eql(u8, field_name, ex)) {
+                is_excluded = true;
+            }
+        }
+        if (is_excluded) continue;
+
+        switch (@typeInfo(field.type)) {
+            .pointer => |p_info| {
+                const p_child = p_info.child;
+                if (p_child == Python.PyObject) continue;
+                if (@typeInfo(p_child) == .@"struct" and @hasField(p_child, "ob_base")) continue;
+                
+                @compileError("Field '" ++ field_name ++ "' in " ++ @typeName(T) ++ " is a pointer but not identified as PyObject-compatible. Add to excluded list if it doesn't hold Python references.");
+            },
+            .optional => |o_info| {
+                const o_child = o_info.child;
+                if (@typeInfo(o_child) == .pointer) {
+                    const p_child = @typeInfo(o_child).pointer.child;
+                    if (p_child == Python.PyObject) continue;
+                    if (@typeInfo(p_child) == .@"struct" and @hasField(p_child, "ob_base")) continue;
+                    
+                    @compileError("Field '" ++ field_name ++ "' in " ++ @typeName(T) ++ " is an optional pointer but not identified as PyObject-compatible. Add to excluded list if it doesn't hold Python references.");
+                }
+            },
+            else => {}
+        }
+    }
 }
 
 pub inline fn parse_vector_call_kwargs(

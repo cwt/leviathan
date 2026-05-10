@@ -20,6 +20,10 @@ const GetAddrInfoData = struct {
     socket_type: i32,
     proto: i32,
     allocator: std.mem.Allocator,
+
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{ "allocator", "host" });
+    }
 };
 
 fn getaddrinfo_callback(data: *const CallbackManager.CallbackData) !void {

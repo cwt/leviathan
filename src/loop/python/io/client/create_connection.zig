@@ -33,6 +33,10 @@ const SocketCreationData = struct {
     future: ?*FutureObject = null,
     loop: ?*LoopObject = null,
 
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{});
+    }
+
     pub fn deinit(self: *SocketCreationData) void {
         const loop_data = utils.get_data_ptr(Loop, self.loop.?);
         const allocator = loop_data.allocator;
@@ -45,31 +49,7 @@ const SocketCreationData = struct {
         const visit: python_c.visitproc = @ptrCast(visit_ptr);
         const self: ?*SocketCreationData = @alignCast(@ptrCast(ptr));
         if (self) |s| {
-            if (s.future) |f| {
-                const vret = visit.?(@ptrCast(f), arg);
-                if (vret != 0) return vret;
-            }
-            if (s.loop) |l| {
-                const vret = visit.?(@ptrCast(l), arg);
-                if (vret != 0) return vret;
-            }
-            if (s.protocol_factory) |pf| {
-                const vret = visit.?(@ptrCast(pf), arg);
-                if (vret != 0) return vret;
-            }
-            // Visit kwargs-parsed fields
-            if (s.py_host) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_port) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_ssl) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_family) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_proto) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_local_addr) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_server_hostname) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_ssl_handshake_timeout) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_ssl_shutdown_timeout) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_happy_eyeballs_delay) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_interleave) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
-            if (s.py_all_errors) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            return python_c.py_visit(s, visit, arg);
         }
         return 0;
     }
@@ -81,7 +61,11 @@ const TransportCreationData = struct {
     loop: *LoopObject,
     socket_fd: std.posix.fd_t,
     zero_copying: bool,
-    fd_created: bool = true
+    fd_created: bool = true,
+
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{});
+    }
 };
 
 fn set_future_exception(err: anyerror, future: *FutureObject) !void {
@@ -257,6 +241,10 @@ const SocketConnectionData = struct {
     address_list: ?[]std.net.Address,
     local_addr_list: ?[]std.net.Address,
     method: SocketConnectionMethod,
+
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{ "creation_data", "address_list", "local_addr_list" });
+    }
 
     pub fn deinit(self: *SocketConnectionData) void {
         const loop_data = utils.get_data_ptr(Loop, self.creation_data.loop.?);
@@ -448,6 +436,10 @@ const MultiConnectState = struct {
     task_ids: std.ArrayListUnmanaged(usize),
     all_errors: bool,
     exceptions: ?PyObject = null,
+
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{ "connection_data" });
+    }
 
     pub fn init(allocator: std.mem.Allocator, connection_data: *SocketConnectionData, all_errors: bool) !*MultiConnectState {
         const self = try allocator.create(MultiConnectState);
@@ -697,6 +689,10 @@ fn create_socket_connection(data: *const CallbackManager.CallbackData) !void {
 const SocketData = struct {
     multi_state: *MultiConnectState,
     socket_fd: std.posix.fd_t,
+
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{ "multi_state" });
+    }
 
     pub fn traverse(ptr: ?*anyopaque, visit_ptr: ?*anyopaque, arg: ?*anyopaque) c_int {
         const self: ?*SocketData = @alignCast(@ptrCast(ptr));

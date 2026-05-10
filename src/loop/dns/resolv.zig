@@ -123,6 +123,10 @@ pub const ControlData = struct {
 
     node: Loop.DNS.PendingList.Node = undefined,
 
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{ "record", "loop", "queries_data", "node" });
+    }
+
     pub fn release(self: *ControlData) void {
         if (!self.resolved) {
             self.record.discard();

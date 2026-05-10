@@ -18,6 +18,10 @@ const GetNameInfoData = struct {
     addr: std.net.Address,
     flags: i32,
     allocator: std.mem.Allocator,
+
+    comptime {
+        python_c.verify_gc_coverage(@This(), &.{ "allocator" });
+    }
 };
 
 fn getnameinfo_callback(data: *const CallbackManager.CallbackData) !void {
