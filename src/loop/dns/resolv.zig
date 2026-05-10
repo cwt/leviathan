@@ -128,13 +128,15 @@ pub const ControlData = struct {
     }
 
     pub fn release(self: *ControlData) void {
+        const loop = self.loop;
         if (!self.resolved) {
             self.record.discard();
 
-            const loop = self.loop;
             for (self.user_callbacks.items) |*v| {
                 v.data.cancelled = true;
-                Loop.Scheduling.Soon.dispatch_guaranteed(loop, v) catch {};
+                Loop.Scheduling.Soon.dispatch_guaranteed(loop, v) catch {
+                    loop.reserved_slots -= 1;
+                };
             }
         }
 

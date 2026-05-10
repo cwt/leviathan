@@ -215,6 +215,11 @@ fn resolve_via_python_getaddrinfo(hostname: []const u8) ![]std.net.Address {
 }
 
 pub fn deinit(self: *DNS) void {
+    var node = self.pending_queries.first;
+    while (node) |n| {
+        node = n.next;
+        n.data.release();
+    }
     self.arena.deinit();
 }
 
@@ -335,6 +340,16 @@ test "get_cache_slot handles different hostname lengths" {
     }
 
     try std.testing.expect(unique_slots.items.len > 1);
+}
+
+test "DNS deinit cleanup" {
+    var loop: Loop = undefined;
+    loop.allocator = std.testing.allocator;
+    loop.dns.pending_queries = DNS.PendingList.init(std.testing.allocator);
+    loop.dns.arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    loop.dns.loop = &loop;
+    
+    loop.dns.deinit();
 }
 
 test {
