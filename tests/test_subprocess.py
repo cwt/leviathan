@@ -1,5 +1,6 @@
 from leviathan import Loop
 import leviathan
+from leviathan.loop import _subprocess_popens
 
 import asyncio, pytest
 
@@ -133,3 +134,29 @@ def test_subprocess_missing_factory() -> None:
             await loop.subprocess_exec(None, ["/usr/bin/true"])
 
     leviathan.run(main())
+
+
+def test_subprocess_popen_cleaned_on_success() -> None:
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        transport, protocol = await loop.subprocess_exec(
+            SubprocessProtocolStub, ["/usr/bin/true"]
+        )
+        pid = transport.get_pid()
+        # Must be cleaned from global dict immediately
+        assert pid not in _subprocess_popens, \
+            f"Popen for pid {pid} leaked in _subprocess_popens"
+        # Must be kept alive on the transport so Popen.__del__ doesn't
+        # reap the child before the transport does
+        assert hasattr(transport, '_popen'), \
+            "Popen not attached to transport"
+        assert transport._popen.pid == pid, \
+            "Wrong Popen attached to transport"
+        await protocol.exited
+        assert protocol.exit_code == 0
+        transport.close()
+
+    leviathan.run(main())
+
+
+

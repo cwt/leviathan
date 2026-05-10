@@ -11,6 +11,7 @@ pub const SubprocessTransportObject = extern struct {
 
     loop: ?PyObject,
     protocol: ?PyObject,
+    popen: ?PyObject,
     pid: std.posix.pid_t,
     returncode: ?PyObject,
 
@@ -34,6 +35,7 @@ fn subprocess_dealloc(self: ?*SubprocessTransportObject) callconv(.c) void {
     }
     python_c.py_xdecref(instance.loop);
     python_c.py_xdecref(instance.protocol);
+    python_c.py_xdecref(instance.popen);
     python_c.py_xdecref(instance.returncode);
     const @"type": *python_c.PyTypeObject = python_c.get_type(@ptrCast(instance));
     @"type".tp_free.?(@ptrCast(instance));
@@ -81,6 +83,23 @@ fn subprocess_close(self: ?*SubprocessTransportObject, _: ?PyObject) callconv(.c
     return python_c.get_py_none();
 }
 
+fn subprocess_get_popen(self: ?*SubprocessTransportObject, _: ?*anyopaque) callconv(.c) ?PyObject {
+    if (self.?.popen) |p| return python_c.py_newref(p);
+    return python_c.get_py_none();
+}
+
+fn subprocess_set_popen(self: ?*SubprocessTransportObject, value: ?PyObject, _: ?*anyopaque) callconv(.c) c_int {
+    const instance = self.?;
+    python_c.py_xdecref(instance.popen);
+    instance.popen = if (value) |v| python_c.py_newref(v) else null;
+    return 0;
+}
+
+const SubprocessGetSet: []const python_c.PyGetSetDef = &[_]python_c.PyGetSetDef{
+    .{ .name = "_popen", .get = @ptrCast(&subprocess_get_popen), .set = @ptrCast(&subprocess_set_popen), .doc = "Popen object", .closure = null },
+    .{ .name = null, .get = null, .set = null, .doc = null, .closure = null },
+};
+
 const SubprocessMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef{
     .{ .ml_name = "get_pid", .ml_meth = @ptrCast(&subprocess_get_pid), .ml_doc = "Get PID.", .ml_flags = python_c.METH_NOARGS },
     .{ .ml_name = "get_returncode", .ml_meth = @ptrCast(&subprocess_get_returncode), .ml_doc = "Get returncode.", .ml_flags = python_c.METH_NOARGS },
@@ -91,10 +110,13 @@ const SubprocessMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef
     .{ .ml_name = null, .ml_meth = null, .ml_doc = null, .ml_flags = 0 },
 };
 
+const Py_tp_getset: c_int = 73;
+
 const SubprocessSlots: []const python_c.PyType_Slot = &[_]python_c.PyType_Slot{
     .{ .slot = python_c.Py_tp_new, .pfunc = @ptrCast(@constCast(&python_c.PyType_GenericNew)) },
     .{ .slot = python_c.Py_tp_dealloc, .pfunc = @ptrCast(@constCast(&subprocess_dealloc)) },
     .{ .slot = python_c.Py_tp_methods, .pfunc = @ptrCast(@constCast(SubprocessMethods.ptr)) },
+    .{ .slot = Py_tp_getset, .pfunc = @ptrCast(@constCast(SubprocessGetSet.ptr)) },
     .{ .slot = python_c.Py_tp_doc, .pfunc = @constCast("Leviathan SubprocessTransport.") },
     .{ .slot = 0, .pfunc = null },
 };
@@ -149,6 +171,8 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
                     python_c.py_decref(v);
                 }
             }
+            python_c.py_xdecref(transport.popen);
+            transport.popen = null;
             return;
         }
         // Still running — re-arm the timer
@@ -207,6 +231,10 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
         const r2 = python_c.PyObject_CallOneArg(cl, python_c.get_py_none_without_incref()) orelse return error.PythonError;
         python_c.py_decref(r2);
     }
+
+    // Popen no longer needed once process has exited; release our reference.
+    python_c.py_xdecref(transport.popen);
+    transport.popen = null;
 }
 
 pub fn start_exit_watcher(transport: *SubprocessTransportObject, loop: *LoopObject) !void {

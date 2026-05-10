@@ -733,15 +733,22 @@ class Loop(_Loop):
         )
         _subprocess_popens[popen.pid] = popen
         try:
-            return await _Loop.subprocess_exec(
+            transport, protocol = await _Loop.subprocess_exec(
                 self, protocol_factory, pid=popen.pid,
             )
+            # Keep popen alive on the transport so Popen.__del__ doesn't
+            # reap the child (via waitpid) before the transport does.
+            # The transport needs the exit status from waitpid to set
+            # its returncode; if Popen steals it, transport gets ECHILD.
+            transport._popen = popen
+            return transport, protocol
         except BaseException:
             if popen.poll() is None:
                 popen.kill()
                 popen.wait()
-            _subprocess_popens.pop(popen.pid, None)
             raise
+        finally:
+            _subprocess_popens.pop(popen.pid, None)
 
 
 import warnings

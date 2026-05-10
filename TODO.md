@@ -185,17 +185,20 @@ When replacing a watcher (e.g. `add_reader(fd, cb2)` after `add_reader(fd, cb1)`
 
 **Test results:** 191/191 internal tests + standard asyncio suite pass across all 4 Python versions (3.13, 3.14, 3.13t, 3.14t) + Zig unit tests.
 
-### 7.2 — Subprocess PIDs Never Cleaned on Success — 🔴 CRITICAL
-**File:** `leviathan/loop.py:727-744`
+### 7.2 — Subprocess PIDs Never Cleaned on Success — 🔴 CRITICAL — ✅ FIXED
+**Files:** `leviathan/loop.py:733-746`, `src/transports/subprocess/transport.zig`, `tests/test_subprocess.py`
 
-On successful `subprocess_exec`:
-- `popen.pid` is added to `_subprocess_popens` (line 734)
-- Only removed on exception path (line 743)
-- On success, pid stays in dict forever
+**Bug:** On successful `subprocess_exec`, Popen was added to `_subprocess_popens` but only removed on exception path. Pid stayed in dict forever. Worse — `Popen.__del__` (Python 3.13+) calls `_internal_poll()` which uses `waitpid(WNOHANG)`, consuming the exit status. If Popen was garbage-collected before the transport's `pidfd_exit_callback` ran, the transport got `ECHILD` and returncode = -1.
 
-**Impact:** Memory leak of Popen objects on every successful subprocess call.
+**Fix:**
+1. Pop Popen from `_subprocess_popens` in `finally` block (always cleans up).
+2. Transfer a reference to the Popen into the transport via `transport._popen = popen` — keeps Popen alive until `pidfd_exit_callback` processes the exit.
+3. Added `popen: ?PyObject` field to `SubprocessTransportObject` Zig struct.
+4. Expose via `PyGetSetDef` with `_popen` getter/setter, wired through `Py_tp_getset` slot (hardcoded value 73).
+5. `pidfd_exit_callback` releases the popen ref on both `ECHILD` path (line 171-174) and normal exit path (line 234-236).
+6. `subprocess_dealloc` also releases popen ref as safety net.
 
-**Fix needed:** Add `_subprocess_popens.pop(popen.pid, None)` in the success path after `_Loop.subprocess_exec()` completes.
+**Test:** `test_subprocess_popen_cleaned_on_success` verifies pid is removed from global dict, transport has `._popen` with matching pid, and exit_code == 0.
 
 ### 7.3 — Global `_subprocess_popens` Never Cleaned — 🟠 HIGH
 **File:** `leviathan/loop.py:26,734,743`
