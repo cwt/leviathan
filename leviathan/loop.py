@@ -530,6 +530,19 @@ class Loop(_Loop):
         )
         return Server(self, srvs)
 
+    async def connect_accepted_socket(
+        self, protocol_factory: Callable[[], asyncio.BaseProtocol],
+        sock: Any, *,
+        ssl: Any = None,
+        ssl_handshake_timeout: float|None = None,
+        ssl_shutdown_timeout: float|None = None,
+    ) -> tuple[asyncio.Transport, asyncio.BaseProtocol]:
+        return await self.create_connection(
+            protocol_factory, sock=sock, ssl=ssl,
+            ssl_handshake_timeout=ssl_handshake_timeout,
+            ssl_shutdown_timeout=ssl_shutdown_timeout,
+        )
+
     async def create_unix_connection(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],
         path: str, *, ssl: Any = None,

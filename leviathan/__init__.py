@@ -1,7 +1,7 @@
 from .future import Future
 from .task import Task
 from .loop import Loop, EventLoopPolicy
-from .runner import run
+from .runner import run, Runner
 
 from .leviathan_zig import StreamTransport
 
