@@ -211,12 +211,11 @@ If loop closes without calling `shutdown_default_executor()`, the `ThreadPoolExe
 
 **Fix needed:** Implement `close()` method that cleans up `_default_executor`.
 
-### 7.5 — `asyncio.get_running_loop()` Misuse — 🟠 HIGH
+### 7.5 — `asyncio.get_running_loop()` Misuse — NOT A BUG
+
 **Files:** `leviathan/future.py:7-8`, `leviathan/task.py:15-16`
 
-Using `asyncio.get_running_loop()` will raise `RuntimeError` outside async context. Unlike deprecated `get_event_loop()`, it doesn't auto-create.
-
-**Fix needed:** Use `asyncio.get_event_loop()` for backwards compatibility, or document that these require an active loop.
+**Analysis:** `get_running_loop()` is the **correct** modern asyncio pattern (PEP 650, Python 3.10+). `get_event_loop()` is deprecated. This only raises `RuntimeError` if called outside an active loop context — same as standard `asyncio.Future()` and `asyncio.Task()` in 3.10+. No fix needed.
 
 ### 7.6 — Dead Code in `create_connection` — 🟡 MEDIUM
 **File:** `leviathan/loop.py:276-277`
