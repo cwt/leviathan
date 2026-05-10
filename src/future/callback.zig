@@ -38,7 +38,8 @@ pub const Data = union(enum) {
 
 pub const Callback = struct {
     data: Data,
-    cancelled: bool = false
+    cancelled: bool = false,
+    executed: bool = false
 };
 
 pub const CallbacksSetData = std.ArrayList(Callback);
@@ -92,7 +93,8 @@ fn run_python_future_set_callbacks(data: *const CallbackManager.CallbackData) !v
     }
 
     for (callbacks_items) |*callback| {
-        if (callback.cancelled) continue;
+        if (callback.cancelled or callback.executed) continue;
+        callback.executed = true;
 
         switch (callback.data) {
             .PythonGeneric => |py_data| {
@@ -147,6 +149,35 @@ fn run_python_future_set_callbacks(data: *const CallbackManager.CallbackData) !v
     } 
 
     python_c.py_decref(@ptrCast(py_future));
+}
+
+pub fn traverse_callbacks_queue(queue: *const CallbacksSetData, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    for (queue.items) |callback| {
+        if (callback.executed) continue;
+        switch (callback.data) {
+            .PythonGeneric => |data| {
+                const vret1 = visit.?(@ptrCast(data.callback), arg);
+                if (vret1 != 0) return vret1;
+                const vret2 = visit.?(@ptrCast(data.context), arg);
+                if (vret2 != 0) return vret2;
+            },
+            .ZigGeneric => |_| {
+                // For Tasks, data.ptr is the Task object.
+                // We don't know for sure, but we can check if it looks like a PyObject.
+                // Actually, in Leviathan, it's always a Task for ZigGeneric callbacks here.
+                // But safer to check if we can.
+                
+                // Wait! wakeup_task user_data is always the Task.
+                // Let's assume it's a PyObject for now or skip it if unsure.
+                // If I skip it, the cycle Loop -> Task is still broken because Loop sees Task.
+                // But what about Future -> Task?
+                // AwaitedFuture -> Task.
+                // If Task holds AwaitedFuture, we have Task -> AwaitedFuture -> Task.
+                // This cycle is HIDDEN if Future doesn't traverse its callbacks.
+            }
+        }
+    }
+    return 0;
 }
 
 pub fn release_callbacks_queue(queue: *const CallbacksSetData) void {

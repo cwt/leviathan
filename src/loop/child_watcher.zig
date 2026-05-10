@@ -151,3 +151,12 @@ fn on_child_exit(data: *const CallbackManager.CallbackData) !void {
     python_c.py_decref(handler.callback);
     self.loop.allocator.destroy(handler);
 }
+
+pub fn traverse(self: *const ChildWatcher, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    var it = self.handlers.valueIterator();
+    while (it.next()) |handler| {
+        const vret = visit.?(@ptrCast(handler.*.callback), arg);
+        if (vret != 0) return vret;
+    }
+    return 0;
+}

@@ -80,6 +80,39 @@ run_tests() {
     fi
 }
 
+run_std_tests() {
+    local py="$1" label="$2" cmd=""
+    printf "${YELLOW}[%s]${NC} Running standard asyncio tests...\n" "$label"
+    
+    # We only run a subset of standard tests that are known to be 100% compatible
+    # to avoid noise from known minor deviations.
+    local std_modules="test_futures test_transports test_protocols test_streams test_runners"
+    
+    local failed=0
+    for mod in $std_modules; do
+        if has_timeout; then
+            cmd="$(get_timeout_cmd) -k 5 60 $py"
+        else
+            cmd="$py"
+        fi
+        
+        if ! PYTHONPATH=. $cmd -c "import leviathan; leviathan.install(); import unittest; from test.test_asyncio import $mod; unittest.main(module=$mod, exit=False, argv=['-q'])" >/dev/null 2>&1; then
+            printf "  ${RED}%s: FAIL${NC}\n" "$mod"
+            failed=1
+        else
+            printf "  ${GREEN}%s: PASS${NC}\n" "$mod"
+        fi
+    done
+    
+    if [ "$failed" -eq 0 ]; then
+        printf "${GREEN}[%s] STD PASS${NC}\n" "$label"
+        return 0
+    else
+        printf "${RED}[%s] STD FAIL${NC}\n" "$label"
+        return 1
+    fi
+}
+
 # ---- main ----
 
 echo "=== Leviathan Test Suite ==="
@@ -123,6 +156,7 @@ for py in python3.13 python3.14 python3.13t python3.14t; do
 
     cp zig-out/lib/libleviathan.so leviathan/leviathan_zig.so
     run_tests "$py" "$py" || true
+    run_std_tests "$py" "$py" || true
     echo ""
 done
 

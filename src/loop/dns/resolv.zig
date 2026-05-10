@@ -2,6 +2,8 @@ const std = @import("std");
 
 const Loop = @import("../main.zig");
 const CallbackManager = @import("callback_manager");
+const python_c = @import("python_c");
+const PyObject = *python_c.PyObject;
 
 const Parsers = @import("parsers.zig");
 const Cache = @import("cache.zig");
@@ -119,6 +121,8 @@ pub const ControlData = struct {
     tasks_finished: usize = 0,
     resolved: bool = false,
 
+    node: Loop.DNS.PendingList.Node = undefined,
+
     pub fn release(self: *ControlData) void {
         if (!self.resolved) {
             self.record.discard();
@@ -130,8 +134,23 @@ pub const ControlData = struct {
             }
         }
 
+        self.loop.dns.pending_queries.unlink_node(self.node);
         self.arena.deinit();
         self.allocator.destroy(self);
+    }
+
+    pub fn traverse(self: *const ControlData, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+        for (self.user_callbacks.items) |*v| {
+            if (v.data.exception_context) |ctx| {
+                const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
+                if (vret1 != 0) return vret1;
+                if (ctx.callback_ptr) |cp| {
+                    const vret2 = visit.?(@ptrCast(cp), arg);
+                    if (vret2 != 0) return vret2;
+                }
+            }
+        }
+        return 0;
     }
 };
 
@@ -538,6 +557,9 @@ fn prepare_data(
     const hostnames_array = try get_hostname_array(arena_allocator, hostname, configuration.search);
 
     control_data.queries_data = queries_data;
+
+    control_data.node = try loop.dns.pending_queries.create_new_node(control_data);
+    loop.dns.pending_queries.append_node(control_data.node);
 
     var queries_built: usize = 0;
     errdefer {

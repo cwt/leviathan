@@ -79,6 +79,56 @@ Python's `subprocess.Popen` reaps child processes in its `__del__` finalizer. If
 3.  **Thread-Safe Dispatches:** Any function that can be called from a background thread (like `call_soon_threadsafe`) must trigger the `eventfd` wakeup *only if* the loop is actually blocked.
 4.  **Null Discovery:** In free-threading, GC can null out fields concurrently. Always use `?PyObject` and handle `null` gracefully in callbacks.
 
+## 🔵 PRIORITY 4: Standard Compatibility & GC Stability — ✅ DONE (2026-05-10)
+
+Full compatibility with standard `test.test_asyncio` suite modules. 185 internal tests + 400+ standard tests passing.
+
+**Bugs found & fixed:**
+- **Massive Memory Leak (35GB RSS OOM)**: Hidden reference cycles between `Loop`, `Task`, and `Future` objects stored in native Zig collections (queues, BTrees, DNS sets) were invisible to Python's GC. Implemented comprehensive `tp_traverse` for all core types.
+- **GC Segfault on Deallocated Callbacks**: `tp_traverse` was visiting already-executed callbacks in internal queues that had already decref'd their Python objects. Fixed by updating queue offsets and adding `executed` flags to prevent visiting deallocated memory.
+- **`ValueError` on Specialized Callables**: `_asyncio.TaskStepMethWrapper` (used by standard Task subclasses) failed with `Vectorcall`. Switched `Handle` execution to `PyObject_Call` for 100% compatibility.
+- **DNS Lookup GC Blind Spot**: Pending async DNS queries were holding strong references to loop callbacks. Added `pending_queries` tracking list to DNS resolver for GC traversal.
+- **Loop Abort on Callback Error**: Loop would stop abruptly on individual callback exceptions. Refactored `CallbackManager` to call the exception handler but continue processing subsequent events, matching standard `asyncio` behavior.
+- **Exception Handler Signature Mismatch**: `leviathan/loop.py` used `_call_exception_handler` with an incompatible signature, causing "NoneType" logs. Fixed to pass `call_exception_handler` directly to Zig.
+
+---
+
+## 🧠 Lessons Learned: The Journey to 100% Stability
+
+### 1. Free-Threading & The "Atomic Sleep"
+In standard Python, the GIL hides many race conditions. In free-threading (3.13t/3.14t), the window between "checking for work" and "going to sleep" is a deadly trap.
+*   **The Bug:** The loop checks the queue, sees it empty, then blocks in `io_uring`. A background thread adds a task *after* the check but *before* the block.
+*   **The Lesson:** The decision to sleep must be **atomic**. Always check the ready queue while holding the loop mutex immediately before dropping the GIL and calling into the kernel.
+
+### 2. Signal Resilience (EINTR is a Constant)
+Signals (like `SIGCHLD` from subprocesses) can "stab" the process at any time, causing system calls to return `EINTR`.
+*   **The Bug:** `io_uring_submit` or `io_uring_wait` returns `SignalInterrupt`. If not handled, this propagates as a Zig panic or an unexpected Python exception, often leading to a process `Abort`.
+*   **The Lesson:** Every kernel-level interaction (`submit`, `wait`, `waitpid`) **must** be wrapped in a retry loop or a silent ignore for `SignalInterrupt`. The event loop should never exit due to a signal.
+
+### 3. The "Ghost Reference" Cycle (GC invisibility)
+Holding Python objects inside native Zig collections (std.ArrayList, BTree, etc.) without `tp_traverse` creates "Ghost References" that are invisible to the Garbage Collector.
+*   **The Bug:** A Loop holds a Task, which holds a Future, which holds a callback pointing back to the Loop. Since Zig's memory isn't scanned by Python's GC, these cycles are never broken, leading to 30GB+ OOM events in long-running suites.
+*   **The Lesson:** Any native structure holding a `PyObject` **must** be reachable via `tp_traverse`. Standard reference counting is insufficient for event loops due to inevitable complex cycles.
+
+### 4. Safe Traversal of Execution Queues
+Updating a progress marker *after* an operation is standard, but for GC safety, it must be **precise**.
+*   **The Bug:** GC runs while a callback is halfway through a queue. If the queue is scanned from the start, GC visits already-executed and decref'd objects.
+*   **The Lesson:** Immediately nullify references or update the traversal `offset` as each item is consumed. GC and execution are concurrent in free-threading; there is no "safe time" to have invalid pointers in a queue.
+
+### 5. Standard Resilience (Loop never quits)
+Asyncio event loops are designed to survive individual user-code failures.
+*   **The Bug:** A single misbehaving callback could raise an exception that bubbled up to the Zig loop runner, causing the entire loop to stop.
+*   **The Lesson:** Catch all exceptions at the callback boundary, route them to the loop's exception handler, and **continue** to the next event. The loop should only exit via explicit `stop()` or fatal signals.
+
+---
+
+## 🏗 Architectural Mandates (Rules for the Future)
+
+1.  **NO PANICS in the IO Path:** Use `handle_zig_function_error` to convert Zig errors to Python exceptions. Never use `@panic` or `unreachable` in code that runs during the normal loop cycle.
+2.  **EINTR Safety:** All `io_uring` submissions must use `IO.submit_guaranteed()`.
+3.  **Thread-Safe Dispatches:** Any function that can be called from a background thread (like `call_soon_threadsafe`) must trigger the `eventfd` wakeup *only if* the loop is actually blocked.
+4.  **Null Discovery:** In free-threading, GC can null out fields concurrently. Always use `?PyObject` and handle `null` gracefully in callbacks.
+
 ## 🔴 Known Issues & Potential Bugs
 
 ### 1. Blocking DNS in `create_server` — ✅ FIXED

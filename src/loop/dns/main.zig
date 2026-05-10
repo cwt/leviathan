@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const Loop = @import("../main.zig");
+const utils = @import("utils");
+const python_c = @import("python_c");
 
 const Cache = @import("cache.zig");
 const Parsers = @import("parsers.zig");
@@ -15,6 +17,8 @@ const DNSCacheEntries = switch (builtin.mode) {
 
 const CACHE_MASK = DNSCacheEntries - 1;
 
+pub const PendingList = utils.LinkedList(*Resolv.ControlData);
+
 loop: *Loop,
 arena: std.heap.ArenaAllocator,
 allocator: std.mem.Allocator,
@@ -25,6 +29,8 @@ cache_entries: [DNSCacheEntries]Cache,
 parsed_hostname_buf: [255]u8,
 
 ipv6_supported: bool,
+
+pending_queries: PendingList,
 
 pub fn init(self: *DNS, loop: *Loop) !void {
     self.loop = loop;
@@ -45,6 +51,8 @@ pub fn init(self: *DNS, loop: *Loop) !void {
     } else |_| {
         self.ipv6_supported = false;
     }
+
+    self.pending_queries = PendingList.init(loop.allocator);
 }
 
 fn load_configuration(self: *DNS, allocator: std.mem.Allocator) !void {
@@ -131,8 +139,6 @@ pub fn reverse_lookup(
 }
 
 fn resolve_via_python_getaddrinfo(hostname: []const u8) ![]std.net.Address {
-    const python_c = @import("python_c");
-
     // Build Python hostname string
     const py_host = python_c.PyUnicode_FromStringAndSize(hostname.ptr, @intCast(hostname.len))
         orelse return error.PythonError;
@@ -212,6 +218,16 @@ pub fn deinit(self: *DNS) void {
     self.arena.deinit();
 }
 
+pub fn traverse(self: *const DNS, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    var node = self.pending_queries.first;
+    while (node) |n| {
+        const vret = n.data.traverse(visit, arg);
+        if (vret != 0) return vret;
+        node = n.next;
+    }
+    return 0;
+}
+
 const DNS = @This();
 
 test "get_cache_slot returns consistent slot for same hostname" {
@@ -223,6 +239,7 @@ test "get_cache_slot returns consistent slot for same hostname" {
         .cache_entries = undefined,
         .parsed_hostname_buf = undefined,
         .ipv6_supported = false,
+        .pending_queries = PendingList.init(std.testing.allocator),
     };
 
     const hostname1 = "example.com";
@@ -243,6 +260,7 @@ test "get_cache_slot distributes hostnames across slots" {
         .cache_entries = undefined,
         .parsed_hostname_buf = undefined,
         .ipv6_supported = false,
+        .pending_queries = PendingList.init(std.testing.allocator),
     };
 
     const hostnames = [_][]const u8{
@@ -284,6 +302,7 @@ test "get_cache_slot handles different hostname lengths" {
         .cache_entries = undefined,
         .parsed_hostname_buf = undefined,
         .ipv6_supported = false,
+        .pending_queries = PendingList.init(std.testing.allocator),
     };
 
     const hostnames = [_][]const u8{

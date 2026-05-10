@@ -80,13 +80,20 @@ pub fn future_clear(self: ?*PythonFutureObject) callconv(.c) c_int {
 pub fn future_traverse(self: ?*PythonFutureObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
     const instance = self.?;
     const future_data = utils.get_data_ptr(Future, instance);
+
     if (future_data.result) |res| {
         const vret = visit.?(@alignCast(@ptrCast(res)), arg);
         if (vret != 0) {
             return vret;
         }
     }
-    return python_c.py_visit(self.?, visit, arg);
+
+    if (!future_data.released) {
+        const vret_q = Future.Callback.traverse_callbacks_queue(&future_data.callbacks_queue, visit, arg);
+        if (vret_q != 0) return vret_q;
+    }
+
+    return python_c.py_visit(instance, visit, arg);
 }
 
 pub fn future_dealloc(self: ?*PythonFutureObject) callconv(.c) void {

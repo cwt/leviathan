@@ -74,7 +74,91 @@ pub fn loop_clear(self: ?*LoopObject) callconv(.c) c_int {
 }
 
 pub fn loop_traverse(self: ?*LoopObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
-    return python_c.py_visit(self.?, visit, arg);
+    const py_loop = self.?;
+    const loop_data = utils.get_data_ptr(Loop, py_loop);
+
+    // Visit standard fields
+    const vret1 = python_c.py_visit(py_loop, visit, arg);
+    if (vret1 != 0) return vret1;
+
+    if (!loop_data.initialized) return 0;
+
+    // Visit ready tasks queues
+    for (&loop_data.ready_tasks_queues) |*queue| {
+        const vret_q = queue.traverse(visit, arg);
+        if (vret_q != 0) return vret_q;
+    }
+
+    // Visit IO blocking tasks
+    const vret_io = loop_data.io.traverse(visit, arg);
+    if (vret_io != 0) return vret_io;
+
+    // Visit watchers
+    const vret_rw = traverse_btree(&loop_data.reader_watchers, visit, arg);
+    if (vret_rw != 0) return vret_rw;
+
+    const vret_ww = traverse_btree(&loop_data.writer_watchers, visit, arg);
+    if (vret_ww != 0) return vret_ww;
+
+    // Visit hooks
+    const vret_ph = traverse_hooks(&loop_data.prepare_hooks, visit, arg);
+    if (vret_ph != 0) return vret_ph;
+
+    const vret_ch = traverse_hooks(&loop_data.check_hooks, visit, arg);
+    if (vret_ch != 0) return vret_ch;
+
+    const vret_ih = traverse_hooks(&loop_data.idle_hooks, visit, arg);
+    if (vret_ih != 0) return vret_ih;
+
+    // Visit DNS
+    const vret_dns = loop_data.dns.traverse(visit, arg);
+    if (vret_dns != 0) return vret_dns;
+    
+    // Visit FS Watcher
+    const vret_fs = loop_data.fs_watcher.traverse(visit, arg);
+    if (vret_fs != 0) return vret_fs;
+
+    // Visit Child Watcher
+    const vret_cw = loop_data.child_watcher.traverse(visit, arg);
+    if (vret_cw != 0) return vret_cw;
+
+    return 0;
+}
+
+fn traverse_btree(btree: anytype, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    return traverse_btree_node(btree.parent, visit, arg);
+}
+
+fn traverse_btree_node(node: anytype, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    const nkeys = node.nkeys;
+    for (node.values[0..nkeys]) |watcher| {
+        const vret = visit.?(@ptrCast(watcher.handle), arg);
+        if (vret != 0) return vret;
+    }
+    for (node.childs[0 .. nkeys + 1]) |maybe_child| {
+        if (maybe_child) |child| {
+            const vret = traverse_btree_node(child, visit, arg);
+            if (vret != 0) return vret;
+        }
+    }
+    return 0;
+}
+
+fn traverse_hooks(hooks: *Loop.HooksList, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    var node = hooks.first;
+    while (node) |n| {
+        const cb = n.data;
+        if (cb.data.exception_context) |ctx| {
+            const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
+            if (vret1 != 0) return vret1;
+            if (ctx.callback_ptr) |cp| {
+                const vret2 = visit.?(@ptrCast(cp), arg);
+                if (vret2 != 0) return vret2;
+            }
+        }
+        node = n.next;
+    }
+    return 0;
 }
 
 pub fn loop_dealloc(self: ?*LoopObject) callconv(.c) void {

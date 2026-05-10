@@ -213,6 +213,41 @@ pub const CallbacksSetsQueue = struct {
         self.first_set = self.queue.first;
         self.last_set = self.queue.first;
     }
+
+    pub fn traverse(self: *const CallbacksSetsQueue, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+        var _node: ?CallbacksSetLinkedList.Node = self.first_set;
+
+        while (_node) |node| {
+            _node = node.next;
+            const callbacks_set = &node.data;
+            const callbacks_num = callbacks_set.callbacks_num;
+
+            for (callbacks_set.callbacks[callbacks_set.offset..callbacks_num]) |*callback| {
+                if (callback.data.user_data) |_| {
+                    // We don't know for sure if it's a PyObject, but for Tasks and Handles it is.
+                    // We need a way to check. Actually, py_visit in python_c.zig uses field types.
+                    // Here we are in a generic Callback.
+                    
+                    // Most callbacks in Leviathan store PyObject in user_data.
+                    // If it's not a PyObject, visit() might crash?
+                    // No, visit() expects a *PyObject.
+                    
+                    // Actually, let's look at how Task and Handle are dispatched.
+                    // They use specific functions.
+                }
+
+                if (callback.data.exception_context) |ctx| {
+                    const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
+                    if (vret1 != 0) return vret1;
+                    if (ctx.callback_ptr) |cp| {
+                        const vret2 = visit.?(@ptrCast(cp), arg);
+                        if (vret2 != 0) return vret2;
+                    }
+                }
+            }
+        }
+        return 0;
+    }
 };
 
 pub fn release_sets_queue(
@@ -280,6 +315,7 @@ pub fn execute_callbacks(
                     if (callback.cleanup) |cleanup| {
                         cleanup(callback.data.user_data);
                     }
+                    callbacks_set.offset += 1;
                 }
 
                 const new_offset = (
@@ -295,6 +331,9 @@ pub fn execute_callbacks(
                 const handler = exception_handler orelse return err;
 
                 handler(err, exception_handler_data, callback.data.exception_context) catch |err2| {
+                    sets_queue.first_set = node;
+                    node.data.offset = new_offset;
+                    callbacks_executed += new_offset;
                     return err2;
                 };
             };
@@ -312,6 +351,7 @@ pub fn execute_callbacks(
                     if (ctx.callback_ptr) |cp| python_c.py_decref(cp);
                 }
             }
+            callbacks_set.offset += 1;
         }
         callbacks_executed += callbacks_num - offset;
 

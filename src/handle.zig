@@ -59,10 +59,17 @@ pub fn callback_for_python_generic_callbacks(data: *const CallbackManager.Callba
     }
 
     var result: PyObject = undefined;
-    if (handle.py_callback_args) |args| {
-        result = python_c.PyObject_Vectorcall(
-            handle.py_callback.?, args, handle.py_callback_len, null
-        ) orelse return error.PythonError;
+    if (handle.py_callback_args) |args_ptr| {
+        const args_len = handle.py_callback_len;
+        const args_tuple = python_c.PyTuple_New(@intCast(args_len)) orelse return error.PythonError;
+        defer python_c.py_decref(args_tuple);
+
+        for (0..args_len) |i| {
+            _ = python_c.PyTuple_SetItem(args_tuple, @intCast(i), python_c.py_newref(args_ptr[i]));
+        }
+
+        result = python_c.PyObject_Call(handle.py_callback.?, args_tuple, null)
+            orelse return error.PythonError;
     }else{
         result = python_c.PyObject_CallNoArgs(handle.py_callback.?)
             orelse return error.PythonError;

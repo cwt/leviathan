@@ -123,15 +123,10 @@ pub fn task_clear(self: ?*PythonTaskObject) callconv(.c) c_int {
 pub fn task_traverse(self: ?*PythonTaskObject, visit: python_c.visitproc, arg: ?*anyopaque) callconv(.c) c_int {
     const instance = self.?;
 
-    const future_data = utils.get_data_ptr(Future, &instance.fut);
-    if (future_data.result) |res| {
-        const vret = visit.?(@alignCast(@ptrCast(res)), arg);
-        if (vret != 0) {
-            return vret;
-        }
-    }
+    const vret = Future.Python.Constructors.future_traverse(&instance.fut, visit, arg);
+    if (vret != 0) return vret;
 
-    return python_c.py_visit(self.?, visit, arg);
+    return python_c.py_visit(instance, visit, arg);
 }
 
 pub fn task_dealloc(self: ?*PythonTaskObject) callconv(.c) void {

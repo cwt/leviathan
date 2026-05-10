@@ -166,3 +166,11 @@ pub fn remove_watch(self: *FSWatcher, wd: i32, callback: PyObject) void {
         }
     }
 }
+
+pub fn traverse(self: *const FSWatcher, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    for (self.watchers.items) |watcher| {
+        const vret = visit.?(@ptrCast(watcher.callback), arg);
+        if (vret != 0) return vret;
+    }
+    return 0;
+}

@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const utils =  @import("utils");
+const python_c = @import("python_c");
 
 const CallbackManager = @import("callback_manager");
 const Loop = @import("../../main.zig");
@@ -253,6 +254,25 @@ pub const BlockingTasksSet = struct {
 
         return true;
     }
+
+    pub fn traverse(self: *const BlockingTasksSet, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+        for (self.task_data_pool[0..self.index]) |*task| {
+            switch (task.data) {
+                .callback => |*cb| {
+                    if (cb.data.exception_context) |ctx| {
+                        const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
+                        if (vret1 != 0) return vret1;
+                        if (ctx.callback_ptr) |cp| {
+                            const vret2 = visit.?(@ptrCast(cp), arg);
+                            if (vret2 != 0) return vret2;
+                        }
+                    }
+                },
+                .none => {}
+            }
+        }
+        return 0;
+    }
 };
 
 pub const WaitData = struct {
@@ -338,7 +358,21 @@ pub fn wakeup_eventfd(self: *IO) !void {
     _ = try std.posix.write(self.eventfd, @as([*]const u8, @ptrCast(&val))[0..@sizeOf(u64)]);
 }
 
+pub fn traverse(self: *const IO, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
+    const vret1 = self.set.traverse(visit, arg);
+    if (vret1 != 0) return vret1;
+
+    var node: ?BlockingTasksSetLinkedList.Node = self.busy_sets.first;
+    while (node) |n| {
+        node = n.next;
+        const vret2 = n.data.traverse(visit, arg);
+        if (vret2 != 0) return vret2;
+    }
+    return 0;
+}
+
 pub fn deinit(self: *IO) void {
+
     self.set.cancel_all(self.loop);
     self.set.deinit();
 
