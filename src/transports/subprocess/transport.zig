@@ -79,6 +79,14 @@ fn subprocess_close(self: ?*SubprocessTransportObject, _: ?PyObject) callconv(.c
     const instance = self.?;
     if (!instance.closed) {
         instance.closed = true;
+        if (instance.pidfd_task_id > 0) {
+            if (instance.loop) |py_loop| {
+                const loop_obj: *LoopObject = @ptrCast(py_loop);
+                const loop_data = utils.get_data_ptr(Loop, loop_obj);
+                _ = loop_data.io.queue(.{ .Cancel = instance.pidfd_task_id }) catch {};
+            }
+            instance.pidfd_task_id = 0;
+        }
     }
     return python_c.get_py_none();
 }
