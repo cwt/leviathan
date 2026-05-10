@@ -95,16 +95,16 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
         orelse return set_future_exception(error.PythonError, ucd.future);
     python_c.py_decref(ret);
 
-    const result_tuple = python_c.PyTuple_New(2) orelse return set_future_exception(error.PythonError, ucd.future);
-    // Note: PyTuple_SetItem steals a reference
-    if (python_c.PyTuple_SetItem(result_tuple, 0, @ptrCast(transport)) != 0) return set_future_exception(error.PythonError, ucd.future);
-    if (python_c.PyTuple_SetItem(result_tuple, 1, protocol) != 0) {
-        python_c.py_decref(result_tuple);
-        return set_future_exception(error.PythonError, ucd.future);
-    }
+    const result_tuple = python_c.PyTuple_Pack(2, @as(PyObject, @ptrCast(transport)), protocol)
+        orelse return set_future_exception(error.PythonError, ucd.future);
+    defer python_c.py_decref(result_tuple);
+
+    // Decref local references as PyTuple_Pack increments them
+    python_c.py_decref(@ptrCast(transport));
+    python_c.py_decref(protocol);
+
     const future_data = utils.get_data_ptr(Future, ucd.future);
     try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
-    python_c.py_decref(result_tuple);
 }
 
 inline fn z_loop_create_unix_connection(

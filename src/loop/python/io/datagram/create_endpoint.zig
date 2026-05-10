@@ -276,18 +276,18 @@ fn create_endpoint(data: *const CallbackManager.CallbackData) !void {
     python_c.py_decref(ret);
 
     try DatagramTransport.ReadTransport.queue_read(transport);
+const result_tuple = python_c.PyTuple_Pack(2, @as(PyObject, @ptrCast(transport)), protocol)
+    orelse return error.PythonError;
+defer python_c.py_decref(result_tuple);
 
-    const result_tuple = python_c.PyTuple_New(2) orelse return error.PythonError;
-    if (python_c.PyTuple_SetItem(result_tuple, 0, @ptrCast(transport)) != 0) return error.PythonError;
-    if (python_c.PyTuple_SetItem(result_tuple, 1, protocol) != 0) {
-        python_c.py_decref(@ptrCast(transport));
-        return error.PythonError;
-    }
+// Decref local references as PyTuple_Pack increments them
+python_c.py_decref(@ptrCast(transport));
+python_c.py_decref(protocol);
 
-    const future_data = utils.get_data_ptr(Future, dcd.future);
-    try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
-    python_c.py_decref(result_tuple);
+const future_data = utils.get_data_ptr(Future, dcd.future);
+try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
 }
+
 
 pub fn loop_create_datagram_endpoint(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject

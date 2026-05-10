@@ -129,15 +129,12 @@ fn datagram_get_write_buffer_size(self: ?*DatagramTransportObject, _: ?PyObject)
 
 fn datagram_get_write_buffer_limits(self: ?*DatagramTransportObject, _: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
-    const tuple = python_c.PyTuple_New(2) orelse return null;
-    defer python_c.py_decref(tuple);
     const low = python_c.PyLong_FromUnsignedLongLong(@intCast(instance.writing_low_water_mark)) orelse return null;
     defer python_c.py_decref(low);
     const high = python_c.PyLong_FromUnsignedLongLong(@intCast(instance.writing_high_water_mark)) orelse return null;
     defer python_c.py_decref(high);
-    if (python_c.PyTuple_SetItem(tuple, 0, low) < 0) return null;
-    if (python_c.PyTuple_SetItem(tuple, 1, high) < 0) return null;
-    return python_c.py_newref(tuple);
+    
+    return python_c.PyTuple_Pack(2, low, high);
 }
 
 const DatagramMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodDef{

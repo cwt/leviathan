@@ -76,13 +76,13 @@ const PythonStreamMethods: []const python_c.PyMethodDef = &[_]python_c.PyMethodD
     python_c.PyMethodDef{
         .ml_name = "set_write_buffer_limits\x00",
         .ml_meth = @ptrCast(&Write.transport_set_write_buffer_limits),
-        .ml_doc = "Return the current size of the output buffer used by the transport.\x00",
+        .ml_doc = "Set the high and low watermarks for write flow control.\x00",
         .ml_flags = python_c.METH_FASTCALL | python_c.METH_KEYWORDS
     },
     python_c.PyMethodDef{
-        .ml_name = "set_write_buffer_limits\x00",
-        .ml_meth = @ptrCast(&Write.transport_set_write_buffer_limits),
-        .ml_doc = "Set the high and low watermarks for write flow control.\x00",
+        .ml_name = "get_write_buffer_limits\x00",
+        .ml_meth = @ptrCast(&Write.transport_get_write_buffer_limits),
+        .ml_doc = "Get the high and low watermarks for write flow control.\x00",
         .ml_flags = python_c.METH_NOARGS
     },
     python_c.PyMethodDef{

@@ -70,10 +70,19 @@ fn build_result_tuple(address_list: []const std.net.Address, port: u16, family_f
         const sockaddr = try utils.Address.to_py_addr_with_port(addr, port);
         defer python_c.py_decref(sockaddr);
 
+        const py_family = python_c.PyLong_FromLong(addr.any.family) orelse return error.PythonError;
+        defer python_c.py_decref(py_family);
+
+        const py_type = python_c.PyLong_FromLong(if (socket_type != 0) socket_type else std.posix.SOCK.STREAM) orelse return error.PythonError;
+        defer python_c.py_decref(py_type);
+
+        const py_proto = python_c.PyLong_FromLong(proto) orelse return error.PythonError;
+        defer python_c.py_decref(py_proto);
+
         const entry = python_c.PyTuple_Pack(5,
-            python_c.PyLong_FromLong(addr.any.family),
-            python_c.PyLong_FromLong(if (socket_type != 0) socket_type else std.posix.SOCK.STREAM),
-            python_c.PyLong_FromLong(proto),
+            py_family,
+            py_type,
+            py_proto,
             python_c.get_py_none_without_incref(),
             sockaddr,
         ) orelse return error.PythonError;

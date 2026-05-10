@@ -736,3 +736,31 @@ async def _test_stream_transport_write_edge_cases() -> None:
 
 def test_stream_transport_write_edge_cases() -> None:
     leviathan.run(_test_stream_transport_write_edge_cases())
+
+async def _test_stream_transport_get_write_buffer_limits() -> None:
+    loop = asyncio.get_running_loop()
+    server_socket, client_socket = socket.socketpair()
+
+    server_socket.setblocking(False)
+    client_socket.setblocking(False)
+    
+    server_protocol = asyncio.Protocol()
+    
+    # Create transport
+    server_transport = StreamTransport(server_socket.fileno(), server_protocol, loop)
+    
+    try:
+        # Check default limits
+        limits = server_transport.get_write_buffer_limits()
+        assert isinstance(limits, tuple)
+        assert len(limits) == 2
+        
+        # Set new limits
+        server_transport.set_write_buffer_limits(low=1000, high=2000)
+        assert server_transport.get_write_buffer_limits() == (1000, 2000)
+    finally:
+        server_transport.close()
+        client_socket.close()
+
+def test_stream_transport_get_write_buffer_limits() -> None:
+    leviathan.run(_test_stream_transport_get_write_buffer_limits())

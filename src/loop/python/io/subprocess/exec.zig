@@ -50,18 +50,19 @@ inline fn z_loop_subprocess_exec(
     try SubprocessTransport.start_exit_watcher(transport, self);
 
     // Return (transport, protocol) tuple — standard asyncio convention
-    const result_tuple = python_c.PyTuple_New(2) orelse return error.PythonError;
-    if (python_c.PyTuple_SetItem(result_tuple, 0, @ptrCast(transport)) != 0) return error.PythonError;
-    if (python_c.PyTuple_SetItem(result_tuple, 1, protocol) != 0) {
-        python_c.py_decref(@ptrCast(transport));
-        return error.PythonError;
-    }
+    const result_tuple = python_c.PyTuple_Pack(2, @as(PyObject, @ptrCast(transport)), protocol)
+        orelse return error.PythonError;
+    defer python_c.py_decref(result_tuple);
+
+    // Decref local references as PyTuple_Pack increments them
+    python_c.py_decref(@ptrCast(transport));
+    python_c.py_decref(protocol);
+
     const future_data = utils.get_data_ptr(Future, fut);
     try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
 
-    python_c.py_decref(result_tuple);
     return fut;
-}
+    }
 
 pub fn loop_subprocess_exec(
     self: ?*LoopObject, args: ?[*]?PyObject, nargs: isize, knames: ?PyObject

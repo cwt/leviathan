@@ -65,7 +65,11 @@ pub fn callback_for_python_generic_callbacks(data: *const CallbackManager.Callba
         defer python_c.py_decref(args_tuple);
 
         for (0..args_len) |i| {
-            _ = python_c.PyTuple_SetItem(args_tuple, @intCast(i), python_c.py_newref(args_ptr[i]));
+            const item = python_c.py_newref(args_ptr[i]);
+            if (python_c.PyTuple_SetItem(args_tuple, @intCast(i), item) != 0) {
+                python_c.py_decref(item);
+                return error.PythonError;
+            }
         }
 
         result = python_c.PyObject_Call(handle.py_callback.?, args_tuple, null)

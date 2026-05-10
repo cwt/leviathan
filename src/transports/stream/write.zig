@@ -64,12 +64,8 @@ pub fn transport_get_write_buffer_size(self: ?*StreamTransportObject) callconv(.
     return python_c.PyLong_FromUnsignedLongLong(@intCast(write_transport.buffer_size));
 }
 
-pub fn transport_get_write_buffer_limits(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
+pub fn transport_get_write_buffer_limits(self: ?*StreamTransportObject, _: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
-
-    const tuple = python_c.PyTuple_New(2)
-        orelse return null;
-    defer python_c.py_decref(tuple);
 
     const low_water_mark = python_c.PyLong_FromUnsignedLongLong(@intCast(instance.writing_low_water_mark))
         orelse return null;
@@ -79,15 +75,7 @@ pub fn transport_get_write_buffer_limits(self: ?*StreamTransportObject) callconv
         orelse return null;
     defer python_c.py_decref(high_water_mark);
 
-    if (python_c.PyTuple_SetItem(tuple, 0, low_water_mark) < 0) {
-        return null;
-    }
-
-    if (python_c.PyTuple_SetItem(tuple, 1, high_water_mark) < 0) {
-        return null;
-    }
-
-    return python_c.py_newref(tuple);
+    return python_c.PyTuple_Pack(2, low_water_mark, high_water_mark);
 }
 
 inline fn z_transport_set_write_buffer_limits(

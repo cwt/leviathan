@@ -818,24 +818,13 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
 // STEP#5: Create transport and set future result
 
 fn z_create_transport_and_set_future_result(data: *const TransportCreationData) !void {
-    var transport_added_to_tuple: bool = false;
-    var protocol_added_to_tuple: bool = false;
-
     const protocol = python_c.PyObject_CallNoArgs(data.protocol_factory) orelse return error.PythonError;
-    errdefer {
-        if (!protocol_added_to_tuple) {
-            python_c.py_decref(protocol);
-        }
-    }
+    errdefer python_c.py_decref(protocol);
 
     const transport = try Stream.Constructors.new_stream_transport(
         protocol, data.loop, data.socket_fd, data.zero_copying
     );
-    errdefer {
-        if (!transport_added_to_tuple) {
-            python_c.py_decref(@ptrCast(transport));
-        }
-    }
+    errdefer python_c.py_decref(@ptrCast(transport));
 
     const connection_made_func = python_c.PyObject_GetAttrString(protocol, "connection_made\x00")
         orelse return error.PythonError;
@@ -845,18 +834,13 @@ fn z_create_transport_and_set_future_result(data: *const TransportCreationData) 
         orelse return error.PythonError;
     defer python_c.py_decref(ret);
 
-    const result_tuple = python_c.PyTuple_New(2) orelse return error.PythonError;
+    const result_tuple = python_c.PyTuple_Pack(2, @as(PyObject, @ptrCast(transport)), protocol)
+        orelse return error.PythonError;
     defer python_c.py_decref(result_tuple);
 
-    if (python_c.PyTuple_SetItem(result_tuple, 0, @ptrCast(transport)) != 0) {
-        return error.PythonError;
-    }
-    transport_added_to_tuple = true;
-
-    if (python_c.PyTuple_SetItem(result_tuple, 1, protocol) != 0) {
-        return error.PythonError;
-    }
-    protocol_added_to_tuple = true;
+    // Decref local references as PyTuple_Pack increments them
+    python_c.py_decref(@ptrCast(transport));
+    python_c.py_decref(protocol);
 
     const future_data = utils.get_data_ptr(Future, data.future);
     try Future.Python.Result.future_fast_set_result(future_data, result_tuple);
