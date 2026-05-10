@@ -249,3 +249,25 @@ def test_create_connection_is_closing() -> None:
         leviathan.run(main())
     finally:
         stop.set()
+
+
+def test_create_connection_all_errors() -> None:
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        # Find a port that is definitely refused
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+
+        # Trigger connection failure with all_errors=True
+        # Note: ExceptionGroup is only available in Python 3.11+
+        try:
+            from builtins import ExceptionGroup
+        except ImportError:
+            # Fallback for older versions if any, though we target 3.13+
+            return
+
+        with pytest.raises(ExceptionGroup, match="Multiple connection failures"):
+            await loop.create_connection(EchoProtocol, "127.0.0.1", port, all_errors=True)
+
+    leviathan.run(main())

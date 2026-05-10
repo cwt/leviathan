@@ -68,7 +68,7 @@ pub fn future_exception(self: ?*PythonFutureObject, _: ?PyObject) callconv(.c) ?
 }
 
 pub inline fn future_fast_set_exception(self: *PythonFutureObject, obj: *Future, exception: PyObject) !void {
-    self.exception = exception;
+    self.exception = python_c.py_newref(exception);
     try Future.Callback.call_done_callbacks(obj, .finished);
 }
 

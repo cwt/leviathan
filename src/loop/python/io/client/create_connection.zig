@@ -40,6 +40,39 @@ const SocketCreationData = struct {
         python_c.deinitialize_object_fields(self, &.{});
         allocator.destroy(self);
     }
+
+    pub fn traverse(ptr: ?*anyopaque, visit_ptr: ?*anyopaque, arg: ?*anyopaque) c_int {
+        const visit: python_c.visitproc = @ptrCast(visit_ptr);
+        const self: ?*SocketCreationData = @alignCast(@ptrCast(ptr));
+        if (self) |s| {
+            if (s.future) |f| {
+                const vret = visit.?(@ptrCast(f), arg);
+                if (vret != 0) return vret;
+            }
+            if (s.loop) |l| {
+                const vret = visit.?(@ptrCast(l), arg);
+                if (vret != 0) return vret;
+            }
+            if (s.protocol_factory) |pf| {
+                const vret = visit.?(@ptrCast(pf), arg);
+                if (vret != 0) return vret;
+            }
+            // Visit kwargs-parsed fields
+            if (s.py_host) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_port) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_ssl) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_family) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_proto) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_local_addr) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_server_hostname) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_ssl_handshake_timeout) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_ssl_shutdown_timeout) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_happy_eyeballs_delay) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_interleave) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+            if (s.py_all_errors) |o| { const vret = visit.?(@ptrCast(o), arg); if (vret != 0) return vret; }
+        }
+        return 0;
+    }
 };
 
 const TransportCreationData = struct {
@@ -54,6 +87,7 @@ const TransportCreationData = struct {
 fn set_future_exception(err: anyerror, future: *FutureObject) !void {
     utils.handle_zig_function_error(err, {});
     const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
+    defer python_c.py_decref(exc);
 
     const future_data = utils.get_data_ptr(Future, future);
     try Future.Python.Result.future_fast_set_exception(future, future_data, exc);
@@ -239,6 +273,14 @@ const SocketConnectionData = struct {
 
         allocator.destroy(self);
     }
+
+    pub fn traverse(ptr: ?*anyopaque, visit_ptr: ?*anyopaque, arg: ?*anyopaque) c_int {
+        const self: ?*SocketConnectionData = @alignCast(@ptrCast(ptr));
+        if (self) |s| {
+            return SocketCreationData.traverse(s.creation_data, visit_ptr, arg);
+        }
+        return 0;
+    }
 };
 
 fn get_host_slice(data: *SocketCreationData) ![]const u8 {
@@ -278,6 +320,7 @@ fn z_try_resolv_host(creation_data: *SocketCreationData) !void {
         .data = .{
             .user_data = connection_data,
             .exception_context = null,
+            .traverse = &SocketConnectionData.traverse,
         },
     };
     const address_list = try loop_data.dns.lookup(hostname, &resolver_callback) orelse return;
@@ -291,6 +334,7 @@ fn z_try_resolv_host(creation_data: *SocketCreationData) !void {
         .data = .{
             .user_data = connection_data,
             .exception_context = null,
+            .traverse = &SocketConnectionData.traverse,
         },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
@@ -331,6 +375,7 @@ fn z_host_resolved_callback(connection_data: *SocketConnectionData) !void {
         .data = .{
             .user_data = connection_data,
             .exception_context = null,
+            .traverse = &SocketConnectionData.traverse,
         },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
@@ -400,8 +445,9 @@ const MultiConnectState = struct {
     pending: usize,
     succeeded: bool,
     failed_count: usize,
-    task_ids: std.ArrayList(usize),
+    task_ids: std.ArrayListUnmanaged(usize),
     all_errors: bool,
+    exceptions: ?PyObject = null,
 
     pub fn init(allocator: std.mem.Allocator, connection_data: *SocketConnectionData, all_errors: bool) !*MultiConnectState {
         const self = try allocator.create(MultiConnectState);
@@ -410,9 +456,12 @@ const MultiConnectState = struct {
             .pending = 0,
             .succeeded = false,
             .failed_count = 0,
-            .task_ids = std.ArrayList(usize){},
+            .task_ids = .{},
             .all_errors = all_errors,
         };
+        if (all_errors) {
+            self.exceptions = python_c.PyList_New(0) orelse return error.PythonError;
+        }
         return self;
     }
 
@@ -422,7 +471,35 @@ const MultiConnectState = struct {
         const allocator = loop_data.allocator;
 
         self.task_ids.deinit(allocator);
+        if (self.exceptions) |e| python_c.py_decref(e);
         allocator.destroy(self);
+    }
+
+    pub fn traverse_raw(ptr: ?*anyopaque, visit_ptr: ?*anyopaque, arg: ?*anyopaque) c_int {
+        const visit: python_c.visitproc = @ptrCast(visit_ptr);
+        const self: ?*MultiConnectState = @alignCast(@ptrCast(ptr));
+        if (self) |s| {
+            if (s.exceptions) |e| {
+                const vret = visit.?(@ptrCast(e), arg);
+                if (vret != 0) return vret;
+            }
+
+            const creation_data = s.connection_data.creation_data;
+            if (creation_data.future) |f| {
+                const vret = visit.?(@ptrCast(f), arg);
+                if (vret != 0) return vret;
+            }
+            if (creation_data.loop) |l| {
+                const vret = visit.?(@ptrCast(l), arg);
+                if (vret != 0) return vret;
+            }
+            if (creation_data.protocol_factory) |pf| {
+                const vret = visit.?(@ptrCast(pf), arg);
+                if (vret != 0) return vret;
+            }
+        }
+
+        return 0;
     }
 };
 
@@ -446,6 +523,7 @@ fn create_socket_and_submit_connect_req(address: *const std.net.Address, data: *
                     .data = .{
                         .user_data = data,
                         .exception_context = null,
+                        .traverse = &SocketData.traverse,
                     },
                 },
             },
@@ -619,6 +697,14 @@ fn create_socket_connection(data: *const CallbackManager.CallbackData) !void {
 const SocketData = struct {
     multi_state: *MultiConnectState,
     socket_fd: std.posix.fd_t,
+
+    pub fn traverse(ptr: ?*anyopaque, visit_ptr: ?*anyopaque, arg: ?*anyopaque) c_int {
+        const self: ?*SocketData = @alignCast(@ptrCast(ptr));
+        if (self) |s| {
+            return MultiConnectState.traverse_raw(s.multi_state, visit_ptr, arg);
+        }
+        return 0;
+    }
 };
 
 fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
@@ -644,6 +730,17 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
     const io_uring_err = data.io_uring_err;
 
     if (io_uring_err != .SUCCESS or io_uring_res < 0) {
+        if (mcs.all_errors) {
+            const errno_val = if (io_uring_res < 0) -io_uring_res else @intFromEnum(io_uring_err);
+            const exc = python_c.PyObject_CallFunction(
+                python_c.PyExc_OSError, "is\x00",
+                @as(c_int, @intCast(errno_val)),
+                "Connect call failed\x00"
+            ) orelse return error.PythonError;
+            defer python_c.py_decref(exc);
+            if (python_c.PyList_Append(mcs.exceptions.?, exc) != 0) return error.PythonError;
+        }
+
         mcs.failed_count += 1;
         if (fd >= 0) std.posix.close(fd);
 
@@ -652,7 +749,19 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
             const future_data = utils.get_data_ptr(Future, future);
 
             if (mcs.all_errors) {
-                @panic("all_errors not yet implemented");
+                const builtins = python_c.PyImport_ImportModule("builtins\x00") orelse return error.PythonError;
+                defer python_c.py_decref(builtins);
+                const exc_group_cls = python_c.PyObject_GetAttrString(builtins, "ExceptionGroup\x00") orelse return error.PythonError;
+                defer python_c.py_decref(exc_group_cls);
+
+                const msg = python_c.PyUnicode_FromString("Multiple connection failures\x00") orelse return error.PythonError;
+                defer python_c.py_decref(msg);
+
+                const exc_group = python_c.PyObject_CallFunctionObjArgs(exc_group_cls, msg, mcs.exceptions.?, @as(?*python_c.PyObject, null))
+                    orelse return error.PythonError;
+                defer python_c.py_decref(exc_group);
+
+                try Future.Python.Result.future_fast_set_exception(@ptrCast(future), future_data, exc_group);
             } else {
                 const errno_val = if (io_uring_res < 0) -io_uring_res else @intFromEnum(io_uring_err);
                 const exc = python_c.PyObject_CallFunction(
@@ -660,9 +769,11 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
                     @as(c_int, @intCast(errno_val)),
                     "Connect call failed\x00"
                 ) orelse {
+                    const exc = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
+                    defer python_c.py_decref(exc);
                     try Future.Python.Result.future_fast_set_exception(
                         @ptrCast(future), future_data,
-                        python_c.PyErr_GetRaisedException() orelse return error.PythonError
+                        exc
                     );
                     mcs.deinit();
                     return error.PythonError;

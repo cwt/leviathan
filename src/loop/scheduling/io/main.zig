@@ -259,6 +259,11 @@ pub const BlockingTasksSet = struct {
         for (self.task_data_pool[0..self.index]) |*task| {
             switch (task.data) {
                 .callback => |*cb| {
+                    if (cb.data.traverse) |t| {
+                        const vret = t(cb.data.user_data, @constCast(@ptrCast(visit)), arg);
+                        if (vret != 0) return vret;
+                    }
+
                     if (cb.data.exception_context) |ctx| {
                         const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
                         if (vret1 != 0) return vret1;

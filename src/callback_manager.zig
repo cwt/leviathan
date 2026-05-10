@@ -32,6 +32,8 @@ pub const CallbackData = struct {
 
     exception_context: ?CallbackExceptionContext,
     cancelled: bool = false,
+
+    traverse: ?*const fn (ptr: ?*anyopaque, visit: ?*anyopaque, arg: ?*anyopaque) c_int = null,
 };
 
 pub const GenericCallback = *const fn (data: *const CallbackData) anyerror!void;
@@ -40,7 +42,8 @@ pub const GenericCleanUpCallback = *const fn (user_data: ?*anyopaque) void;
 pub const Callback = struct {
     func: GenericCallback,
     cleanup: ?GenericCleanUpCallback,
-    data: CallbackData
+    data: CallbackData,
+    executed: bool = false
 };
 
 pub const CallbacksSet = struct {
@@ -220,17 +223,11 @@ pub const CallbacksSetsQueue = struct {
             const callbacks_num = callbacks_set.callbacks_num;
 
             for (callbacks_set.callbacks[callbacks_set.offset..callbacks_num]) |*callback| {
-                if (callback.data.user_data) |_| {
-                    // We don't know for sure if it's a PyObject, but for Tasks and Handles it is.
-                    // We need a way to check. Actually, py_visit in python_c.zig uses field types.
-                    // Here we are in a generic Callback.
-                    
-                    // Most callbacks in Leviathan store PyObject in user_data.
-                    // If it's not a PyObject, visit() might crash?
-                    // No, visit() expects a *PyObject.
-                    
-                    // Actually, let's look at how Task and Handle are dispatched.
-                    // They use specific functions.
+                if (callback.executed) continue;
+
+                if (callback.data.traverse) |t| {
+                    const vret = t(callback.data.user_data, @constCast(@ptrCast(visit)), arg);
+                    if (vret != 0) return vret;
                 }
 
                 if (callback.data.exception_context) |ctx| {
@@ -298,6 +295,9 @@ pub fn execute_callbacks(
 
         const offset = callbacks_set.offset;
         for (callbacks_set.callbacks[offset..callbacks_num]) |*callback| {
+            if (callback.executed) continue;
+            callback.executed = true;
+
             if (debug_state != null) {
                 if (callback.data.exception_context) |ctx| {
                     python_c.py_incref(ctx.module_ptr);
