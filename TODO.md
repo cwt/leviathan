@@ -157,7 +157,89 @@ Real testing confirmed UDP DNS works fine on this kernel.
 Removed the dead `resolve_via_python_getaddrinfo` function from `src/loop/dns/main.zig`.
 
 ### 5. Watcher Cancel / Re-arm Race Condition
-FD watcher state machine can occasionally hit a state where `blocking_task_id` is 0 during cancellation (src/loop/python/io/watchers.zig:305), indicating a tracking bug under heavy concurrency.
+FD watcher state machine can occasionally hit a state where `blocking_task_id` is 0 during cancellation (src/loop/python/io/watchers.zig:322), indicating a tracking bug under heavy concurrency.
+
+---
+
+## 🔴 PRIORITY 7: New Bugs Found (2026-05-11)
+
+Critical and high-priority bugs discovered during deep code analysis.
+
+### 7.1 — Watcher Replacement Memory Leak — 🔴 CRITICAL
+**File:** `src/loop/python/io/watchers.zig:203-209`
+
+When replacing an existing FD watcher:
+- Old `FDWatcher` struct is fetched via `watchers.get_value(fd, null)`
+- Only the `handle` (PyObject) is decref'd
+- The struct pointer allocated via `allocator.create(Loop.FDWatcher)` is **never freed**
+- `insert()` in BTree just overwrites without returning old value
+
+**Impact:** With Python's high-frequency socket open/close, leaks allocator memory and PythonHandleObject.
+
+**Fix needed:** Use `watchers.replace()` instead of `insert()` to get old value for cleanup, or manually delete + free before insert.
+
+### 7.2 — Subprocess PIDs Never Cleaned on Success — 🔴 CRITICAL
+**File:** `leviathan/loop.py:727-744`
+
+On successful `subprocess_exec`:
+- `popen.pid` is added to `_subprocess_popens` (line 734)
+- Only removed on exception path (line 743)
+- On success, pid stays in dict forever
+
+**Impact:** Memory leak of Popen objects on every successful subprocess call.
+
+**Fix needed:** Add `_subprocess_popens.pop(popen.pid, None)` in the success path after `_Loop.subprocess_exec()` completes.
+
+### 7.3 — Global `_subprocess_popens` Never Cleaned — 🟠 HIGH
+**File:** `leviathan/loop.py:26,734,743`
+
+The global dict keeps Popen objects alive until interpreter exit. No cleanup mechanism when loop closes.
+
+**Fix needed:** Add cleanup in loop `close()` method or `shutdown_default_executor()`.
+
+### 7.4 — ThreadPoolExecutor Leak on Loop Close — 🟠 HIGH
+**File:** `leviathan/loop.py:91-92`
+
+If loop closes without calling `shutdown_default_executor()`, the `ThreadPoolExecutor` leaks. No `close()` method in `Loop` class to clean this up automatically.
+
+**Fix needed:** Implement `close()` method that cleans up `_default_executor`.
+
+### 7.5 — `asyncio.get_running_loop()` Misuse — 🟠 HIGH
+**Files:** `leviathan/future.py:7-8`, `leviathan/task.py:15-16`
+
+Using `asyncio.get_running_loop()` will raise `RuntimeError` outside async context. Unlike deprecated `get_event_loop()`, it doesn't auto-create.
+
+**Fix needed:** Use `asyncio.get_event_loop()` for backwards compatibility, or document that these require an active loop.
+
+### 7.6 — Dead Code in `create_connection` — 🟡 MEDIUM
+**File:** `leviathan/loop.py:276-277`
+
+```python
+if ssl is not None:
+    kwargs["ssl"] = ssl  # Dead code - function returns at line 265 before this
+```
+
+### 7.7 — Typo in Error Message — 🟡 MEDIUM
+**File:** `leviathan/loop.py:199`
+
+```python
+"Default executor shutted down"  # Should be "shutdown"
+```
+
+### 7.8 — Bare `except` in `run_until_complete` — 🟡 MEDIUM
+**File:** `leviathan/loop.py:180-185`
+
+Catches everything including `KeyboardInterrupt` and `SystemExit`.
+
+### 7.9 — Incomplete SSL unwrap Error Handling — 🟡 MEDIUM
+**File:** `leviathan/loop.py:41-45`
+
+Missing `SSLWantReadError` and `SSLWantWriteError` in exception handling for `unwrap()`.
+
+### 7.10 — `ssl_shutdown_timeout` Parameter Ignored — 🟡 MEDIUM
+**File:** `leviathan/loop.py:259,403`
+
+Parameter accepted but never used in `_create_ssl_server` or elsewhere.
 
 ---
 
