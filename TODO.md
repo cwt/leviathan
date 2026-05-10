@@ -248,11 +248,13 @@ Added `SSLWantReadError` and `SSLWantWriteError` to the caught exceptions in `_S
 
 ---
 
-## 🚀 Recommended Next Steps
+## ✅ Completed Next Steps
 
-1.  **Refactor `create_server` DNS**: Implement an async state machine for `create_server` resolution, similar to `create_connection`.
-2.  **Universal Sockaddr Handling**: Abstract IPv4/IPv6/Unix address handling into a unified utility to remove hardcoded `AF_INET` dependencies.
-3.  **Implement `getnameinfo`**: Complete the DNS suite by adding `loop.getnameinfo`.
+1.  **`create_server` DNS** — ✅ Already implemented with async state machine (same callback pattern as `create_connection`). Added `host=None` support (binds to all interfaces: IPv4 + IPv6).
+
+2.  **Universal Sockaddr Handling** — ✅ Already in place. Address resolution uses `std.net.Address` throughout; family is detected dynamically from `address.any.family`. Two minor `AF.INET` defaults exist as reasonable fallbacks (datagram endpoint, stream server) — consistent with Python stdlib behavior.
+
+3.  **`getnameinfo`** — ✅ Already implemented at `src/loop/python/io/socket/getnameinfo.zig`. Registered as `loop.getnameinfo`. Uses PTR reverse DNS via `loop.dns.reverse_lookup`.
 
 ---
 
@@ -266,4 +268,4 @@ Added `SSLWantReadError` and `SSLWantWriteError` to the caught exceptions in `_S
 
 - **uvloop source:** https://github.com/MagicStack/uvloop
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md`
-- **Test results:** 189 internal tests + standard asyncio suite modules PASS on all 4 versions.
+- **Test results:** 193 internal tests + standard asyncio suite modules PASS on all 4 versions.

@@ -424,6 +424,8 @@ class Loop(_Loop):
                 ssl_shutdown_timeout=ssl_shutdown_timeout,
                 start_serving=start_serving,
             )
+        if host is None:
+            host = ""
         kwargs = {}
         if family:
             kwargs["family"] = family

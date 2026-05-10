@@ -116,6 +116,21 @@ def test_create_server_localhost_echo() -> None:
     leviathan.run(main())
 
 
+def test_create_server_bind_all_interfaces() -> None:
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        server = await loop.create_server(EchoProtocol, None, 0)
+        assert server.is_serving()
+        assert len(server.sockets) >= 1
+        for s in server.sockets:
+            name = s.getsockname()
+            assert name[0] in ("0.0.0.0", "::"), f"unexpected addr: {name}"
+        server.close()
+        await server.wait_closed()
+
+    leviathan.run(main())
+
+
 def test_create_server_unresolvable_host() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()

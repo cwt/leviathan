@@ -148,6 +148,26 @@ fn z_try_resolve_server_host(creation_data: *ServerCreationData) !void {
     server_data.creation_data = creation_data;
     server_data.address_list = null;
 
+    if (hostname.len == 0) {
+        const allow_ipv6 = loop_data.dns.ipv6_supported;
+        var list = std.ArrayList(std.net.Address){};
+        try list.append(allocator, std.net.Address.initIp4(.{0, 0, 0, 0}, 0));
+        if (allow_ipv6) {
+            try list.append(allocator, std.net.Address.initIp6(.{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0));
+        }
+        server_data.address_list = try list.toOwnedSlice(allocator);
+        const callback = CallbackManager.Callback{
+            .func = &create_server_socket,
+            .cleanup = null,
+            .data = .{
+                .user_data = server_data,
+                .exception_context = null,
+            },
+        };
+        try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
+        return;
+    }
+
     const resolver_callback = CallbackManager.Callback{
         .func = &server_host_resolved_callback,
         .cleanup = null,
