@@ -21,7 +21,7 @@ pub fn connection_lost_callback(transport_obj: PyObject, exception: PyObject) !v
     const read_transport = utils.get_data_ptr2(ReadTransport, "read_transport", transport);
     const write_transport = utils.get_data_ptr2(WriteTransport, "write_transport", transport);
 
-    try close_transports(transport, read_transport, write_transport, exception);
+    close_transports(transport, read_transport, write_transport, exception);
 } 
 
 pub fn close_transports(
@@ -29,38 +29,45 @@ pub fn close_transports(
     read_transport: *ReadTransport,
     write_transport: *WriteTransport,
     exception: PyObject
-) !void {
+) void {
     const closed_already = read_transport.closed or write_transport.closed;
 
-    try read_transport.close();
-    try write_transport.close();
+    read_transport.close() catch {};
+    write_transport.close() catch {};
 
     transport.is_reading = false;
     transport.is_writing = false;
 
-    if (!closed_already) {
-        const loop_obj = transport.loop.?;
-        
-        // Check if loop is closed
-        const is_closed_attr = python_c.PyObject_GetAttrString(loop_obj, "is_closed\x00") orelse return error.PythonError;
-        defer python_c.py_decref(is_closed_attr);
-        const is_closed_py = python_c.PyObject_CallNoArgs(is_closed_attr) orelse return error.PythonError;
-        defer python_c.py_decref(is_closed_py);
-        
-        if (python_c.PyObject_IsTrue(is_closed_py) != 0) {
-            // Loop is closed, call immediately
-            const ret = python_c.PyObject_CallOneArg(transport.protocol_connection_lost.?, exception)
-                orelse return error.PythonError;
-            python_c.py_decref(ret);
-        } else {
-            // Loop is open, defer call
-            const call_soon = python_c.PyObject_GetAttrString(loop_obj, "call_soon\x00") orelse return error.PythonError;
-            defer python_c.py_decref(call_soon);
-            
-            const ret = python_c.PyObject_CallFunctionObjArgs(call_soon, transport.protocol_connection_lost.?, exception, @as(?*python_c.PyObject, null))
-                orelse return error.PythonError;
-            python_c.py_decref(ret);
-        }
+    if (closed_already) return;
+
+    const loop_obj = transport.loop orelse return;
+    const connection_lost = transport.protocol_connection_lost orelse return;
+
+    // Check if loop is closed
+    const is_closed_attr = python_c.PyObject_GetAttrString(loop_obj, "is_closed\x00") orelse {
+        python_c.PyErr_Clear();
+        return;
+    };
+    defer python_c.py_decref(is_closed_attr);
+    const is_closed_py = python_c.PyObject_CallNoArgs(is_closed_attr) orelse {
+        python_c.PyErr_Clear();
+        return;
+    };
+    defer python_c.py_decref(is_closed_py);
+
+    const closed = python_c.PyObject_IsTrue(is_closed_py) != 0;
+
+    if (closed) {
+        const ret = python_c.PyObject_CallOneArg(connection_lost, exception);
+        if (ret) |v| python_c.py_decref(v) else python_c.PyErr_Clear();
+    } else {
+        const call_soon = python_c.PyObject_GetAttrString(loop_obj, "call_soon\x00") orelse {
+            python_c.PyErr_Clear();
+            return;
+        };
+        defer python_c.py_decref(call_soon);
+        const ret = python_c.PyObject_CallFunctionObjArgs(call_soon, connection_lost, exception, @as(?*python_c.PyObject, null));
+        if (ret) |v| python_c.py_decref(v) else python_c.PyErr_Clear();
     }
 }
 
@@ -88,10 +95,7 @@ pub fn transport_close(self: ?*StreamTransportObject) callconv(.c) ?PyObject {
     }
 
     const arg = python_c.get_py_none();
-    close_transports(instance, read_transport, write_transport, arg) catch |err| {
-        python_c.py_decref(arg);
-        return utils.handle_zig_function_error(err, null);
-    };
+    close_transports(instance, read_transport, write_transport, arg);
 
     // We don't set instance.closed = true here anymore.
     // Instead, we wait for both transports to be closed.

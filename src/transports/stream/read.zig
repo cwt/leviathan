@@ -88,7 +88,7 @@ pub fn read_operation_completed(read_transport: *ReadTransport, data: []const u8
             const exc = python_c.get_py_none();
             defer python_c.py_decref(exc);
 
-            try Lifecyle.close_transports(
+            Lifecyle.close_transports(
                 transport, read_transport, write_transport, exc
             );
         } 
