@@ -346,10 +346,10 @@ Benchmark results (rev 416) reveal leviathan is **2-12× slower** than standard 
 | Unix Echo | 0.72× | I/O |
 | UDP Ping-Pong | 0.80× | I/O |
 | Chat | 0.73× | Mixed (sleep-dominated) |
-| **Subprocess** | **0.08×** | **Fork/exec (11× slower)** |
+| **Subprocess** | **0.08×** | **100ms pidfd timer poll** |
 | **Socket Ops** | **TIMEOUT** | **512× connect overhead > 30s** |
 
-Pattern: Task scheduling overhead dominates (~0.42×), I/O shows moderate penalty (0.57–0.80×), subprocess is catastrophically slow, and high-connection-count benchmarks time out.
+Pattern: Task scheduling overhead dominates (~0.42×), I/O shows moderate penalty (0.57–0.80×), subprocess is catastrophically slow due to 100ms polling interval, and high-connection-count benchmarks time out.
 
 ---
 
@@ -400,18 +400,19 @@ Three compounding effects:
 
 ---
 
-### Root Cause C: Synchronous `subprocess.Popen` Blocks the Event Loop (`leviathan/loop.py:760`)
+### Root Cause C: pidfd Exit Timer Polls Every 100ms (`src/transports/subprocess/transport.zig:199,217,261`)
 
-```python
-popen = subprocess.Popen(cmd, ...)  # fork() + exec() — synchronous, blocks loop
+```zig
+.duration = .{ .sec = 0, .nsec = 100_000_000 },  // 100ms timer!
 ```
 
-`fork()` is O(process RSS). On a Python process with 500MB, this takes 10–50ms. Every subprocess call blocks the entire event loop — no IO, no callbacks, nothing. The `_TransportWrapper` Python class adds further overhead:
-- Two closures allocated per `subprocess_exec` call (`leviathan/loop.py:825,833`)
-- `_TransportWrapper` instance allocated twice per call (once at line 853, replaced by line 825)
-- `_exit_future` stored redundantly on wrapper instance (`loop.py:776,818`)
+**This is the actual subprocess bottleneck, not `Popen`.** The benchmark spawns `sys.exit(0)` processes that complete in microseconds. But `pidfd_exit_callback` uses `io_uring` timer-based polling at 100ms intervals to check `waitpid(WNOHANG)`. Each subprocess blocks for 100ms before the timer fires and detects the exit. 50 subprocesses × 100ms = 5s. This explains the 0.08× benchmark result exactly.
 
-**Files:** `leviathan/loop.py:760–765, 772–853`
+`subprocess.Popen` is NOT the bottleneck — asyncio calls it synchronously too and achieves 0.4s for the same workload. The `_TransportWrapper` Python overhead is also negligible compared to the 100ms timer.
+
+**Correct fix:** Reduce the first poll to 1ms, then 10ms, then back off to 100ms. Or use `io_uring` IORING_OP_POLL_ADD on the pidfd for immediate exit notification (like `epoll` on pidfd).
+
+**Files:** `src/transports/subprocess/transport.zig:199,217,261`
 
 ---
 
@@ -441,7 +442,7 @@ Called on every blocking task submission (read, write, timer, connect, accept, D
 | H | `src/callback_manager.zig` | 122–123 | `while` loop for capacity doubling could be single `@max` |
 | I | `src/callback_manager.zig` | 259–271 | All pending callbacks executed synchronously during loop teardown |
 | J | `src/callback_manager.zig` | 301–306, 346–349 | Debug-mode incref/decref per callback adds atomic refcount overhead |
-| K | `src/loop/python/io/subprocess/exec.zig` | 53–59 | `PyTuple_Pack` heap allocation per subprocess_exec |
+| K | `src/loop/scheduling/soon.zig` | 6–8 | `wakeup_eventfd()` called BEFORE `queue.append()` — logically wrong order (wake before enqueue). Swapping lines 7–8 and 10–11 is cleaner. |
 
 ---
 
@@ -449,42 +450,199 @@ Called on every blocking task submission (read, write, timer, connect, accept, D
 
 The `socket_ops` benchmark does 512 sequential `connect → write → read → close` cycles (×3 iterations). Each cycle triggers ~5 callbacks through the event loop. That's ~7680 callbacks total. With per-callback overhead amplified by:
 
-1. Mutex contention (Root Cause A)
-2. Queue capacity inflation (Root Cause B) — every callback appends with `reserved_slots` as min_capacity, causing repeated `increase_capacity()` calls
-3. No queue pruning (Root Cause B #3) — queue grows but never shrinks
+1. **Mutex contention (Root Cause A)**: Each callback dispatch acquires/releases the mutex. 7680 lock operations serialised behind the main loop.
+2. **Queue capacity inflation (Root Cause B)**: Every callback appends with `reserved_slots` as min_capacity. Even with only ~5 callbacks active, the queue maintains capacity for all reserved_slots (tens of thousands). The `increase_capacity()` calls under the mutex compound.
+3. **No queue pruning (Root Cause B #3)**: Queue grows to fit reserved_slots but never shrinks. Each of the 7680 dispatches traverses the entire oversized queue.
 
-The cumulative overhead pushes 7680 dispatch cycles past 30s, causing the benchmark timeout.
+The cumulative overhead pushes 7680 dispatch cycles past 30s. In contrast, `tcp_echo` at m=1024 only does 1 connection (large transfer), so the per-connection overhead is amortized.
 
 ---
 
-### Improvement Plan
+### Lesson Alignment: Cross-Checking Each Fix Against Development History
+
+Before implementing any fix, each must be validated against the 5 lessons learned and 4 architectural mandates.
+
+#### Fix 8.1: Remove `reserved_slots` from capacity in `dispatch_nonthreadsafe`
+
+- **Lesson 1 (Atomic Sleep)**: ✅ SAFE. We still hold the mutex during `queue.append()`. The ring_blocked/eventfd check is unchanged.
+- **Lesson 2 (EINTR)**: ✅ Not affected.
+- **Lesson 3 (GC traversal)**: ✅ Not affected — capacity changes don't create new PyObject references.
+- **Lesson 4 (Safe traversal)**: ✅ Not affected — the executed flag + offset pattern is unchanged.
+- **Lesson 5 (Loop resilience)**: ✅ Not affected.
+- **Mandate 3 (Thread-safe dispatch)**: ✅ The mutex still protects the append.
+
+#### Fix 8.2: Only `ensure_capacity` the active queue
+
+- **Lesson 1**: ✅ SAFE. Still under mutex, still atomic.
+- **Lesson 3**: ✅ IMPROVES GC — the inactive queue has smaller capacity, fewer slots to traverse. Less memory pressure.
+- **All others**: ✅ Not affected.
+
+#### Fix 8.3 (CORRECTED): Reduce pidfd timer interval
+
+**ORIGINAL FIX (REJECTED):** "Run Popen in thread pool" — wrong because:
+- `subprocess.Popen` is NOT the bottleneck (asyncio does it too and is 11× faster)
+- Moving Popen to a thread pool would require complex GC tracking for the Popen object (Lesson 3)
+- `fork()` in a multi-threaded process has known issues with `close_fds`, signal handlers, etc.
+
+**CORRECTED FIX:**
+- **Lesson 1**: ✅ SAFE. Timer-based callbacks go through the same dispatch path.
+- **Lesson 2 (EINTR)**: ✅ Timer callbacks are not signals, no EINTR concerns.
+- **Lesson 3**: ⚠️ The transport struct holds `popen: ?PyObject` which is already tracked via the loop's subprocess dict. No new GC issue, but verify `pidfd_exit_callback` still releases the popen ref even if timer fires multiple times.
+- **Mandate 4 (Null discovery)**: ✅ Timer callback already handles `transport.closed` and `data.cancelled`.
+
+**Implementation options (in order of preference):**
+1. **Best**: Use `io_uring` IORING_OP_POLL_ADD on the pidfd — wakes immediately on process exit, zero polling overhead (like `epoll` on pidfd).
+2. **Good**: Exponential backoff — 1ms → 10ms → 100ms → 1s. First poll catches 99% of exits instantly.
+3. **Quick**: Simply reduce to 1ms for all polls. Slightly more CPU but eliminates the 5s penalty.
+4. **Alternative**: Use `waitpid(WNOHANG)` in a synchronous busy-loop in `_wait()` on the Python side (not ideal).
+
+#### Fix 8.4: Decouple prune from `reserved_slots`
+
+- **Lesson 1**: ✅ SAFE. Pruning happens during `call_once` which runs without the mutex held.
+- **Lesson 3 (GC)**: ✅ IMPROVES. Allowing the queue to shrink means fewer stale slots for GC to traverse. Reduces OOM risk under sustained load.
+- **Lesson 4 (Safe traversal)**: ⚠️ Pruning must NOT remove slots that GC is still traversing. The `call_once` → `execute_callbacks` → `prune` sequence already updates offsets and executed flags atomically. Verify that `prune` only removes fully-executed slots (offset ≥ callbacks_num).
+
+#### Fix 8.5: `@max` instead of `while` loop
+
+- **All lessons**: ✅ SAFE. Pure computation change, same result. Slightly less time under mutex.
+
+#### Fix 8.6 (REJECTED): Move `wakeup_eventfd` outside mutex
+
+**REJECTED — violates Lesson 1 (Atomic Sleep).**
+
+The current code (`soon.zig:6–8`) checks `ring_blocked` and writes eventfd INSIDE the mutex:
+```zig
+// Under mutex:
+if (self.io.ring_blocked) {
+    try self.io.wakeup_eventfd();
+}
+// Then append callback
+```
+
+This is correct per Lesson 1: the `ring_blocked` flag is set by the main loop BEFORE releasing the mutex (`runner.zig:184–185`):
+```zig
+self.io.ring_blocked = true;   // set BEFORE unlock
+mutex.unlock();                 // then release for sleep
+```
+
+If we move the `ring_blocked` check outside the mutex, the decision is no longer atomic with the queue append. A background thread could:
+1. Append callback (under mutex) → release mutex
+2. Read `ring_blocked` → false (the loop hasn't set it yet)
+3. Skip eventfd
+4. Loop sets ring_blocked → sleeps
+
+The callback sits in the queue until the next IO event — potentially forever in a pure task-based workload.
+
+**The eventfd write is NOT the bottleneck.** It's a `write()` to a file descriptor — microseconds. The real issue is `ensure_capacity(reserved_slots)` inside `queue.append()` which can call `malloc()`. Fixes 8.1 and 8.2 address this.
+
+**Minor improvement (safe):** Swap the order of eventfd check and queue append in `dispatch_nonthreadsafe` — wake AFTER enqueue, not before (lines 7–8 and 10–11). Logically cleaner, same behavior under mutex.
+
+#### Fix 8.7 (QUALIFIED): Shrink mutex in runner
+
+**ORIGINAL: "Only hold mutex for queue swap" — UNDERSPECIFIED.**
+
+Per Lesson 1, the atomic sleep check (queue empty + ring_blocked set + sleep) must remain atomic. The mutex must cover:
+1. Queue empty check
+2. ring_blocked set to true
+3. Mutex release (concurrent with sleep start)
+
+The mutex does NOT need to cover:
+- Hook execution (`execute_hooks`) — hooks don't touch the ready queue
+- Queue ensure_capacity (Fix 8.2 removes this entirely)
+- The actual io_uring sleep (already released by defer in poll_blocking_events)
+
+**Corrected approach:**
+```zig
+mutex.lock()
+  // queue empty check + ring_blocked = true (inside poll_blocking_events)
+  poll_blocking_events(self, mutex, wait, ready_queue)  // releases mutex during sleep
+  // mutex re-acquired, ring_blocked = false
+  queue swap (atomic, under mutex)
+mutex.unlock()
+  // NEW: execute hooks WITHOUT mutex
+  execute_hooks(check_hooks)
+  // callback dispatch (already without mutex)
+  call_once(...)
+  execute_hooks(idle_hooks)
+  execute_hooks(prepare_hooks)
+mutex.lock()  // for next iteration
+```
+
+Move hook execution AFTER mutex.unlock() but keep the queue swap under lock. The `ring_blocked` check in dispatch continues to work because the queue state + ring_blocked flag remain atomically managed.
+
+#### Fix 8.8 (QUALIFIED): Lock-free SPSC queue
+
+**Lesson 3 (GC) & Lesson 4 (Safe traversal): CRITICAL CONSTRAINT.**
+
+Any new queue data structure holding `Callback` objects (which contain `PyObject` references via `CallbackData`) MUST:
+- Implement `tp_traverse` for GC visibility (Lesson 3)
+- Use the same offset/executed flag pattern (Lesson 4)
+- Be periodically drained to the main queue under mutex for GC traversal
+
+**Lock-free queues cannot be safely traversed by GC** because the producer might be writing concurrently. The solution: drain the SPSC queue to a GC-traversable secondary buffer during `call_once`, then traverse that buffer. After draining, the SPSC queue can be GC-safe.
+
+#### Fix 8.11 (Budget-based GIL yield)
+
+- **Lesson 5 (Loop resilience)**: ✅ ALIGNS. Prevents one slow callback from starving all Python threads. After exceptions, the loop continues (existing behavior).
+- **Lesson 1**: ✅ SAFE. Only affects callback execution, not the sleep decision.
+- **Free-threading**: ⚠️ During GIL release, other Python threads may run and mutate shared state. Ensure all callback data is fully consumed before yielding.
+
+#### Fix 8.12 (posix_spawn)
+
+- **Lesson 2 (EINTR)**: `posix_spawn` internally handles EINTR, unlike raw `fork()`.
+- **Lesson 3 (GC)**: ⚠️ The `subprocess.Popen` object is created inside `posix_spawn`. Must still be tracked in `_subprocess_popens` dict.
+- **Practical concern**: `posix_spawn` with `close_fds=True` requires listing all open FDs (performance concern). Consider `os.posix_spawnp` or manual `vfork()` + `exec()` in a child.
+
+---
+
+### Corrected Improvement Plan
 
 #### Phase 1: Quick Wins (Low Risk, High Impact) — Estimate 1–2 hours
 
-| # | Fix | File(s) | Expected Gain | Difficulty |
-|---|-----|---------|---------------|------------|
-| 8.1 | Remove `reserved_slots` from `dispatch_nonthreadsafe` capacity — pass `1` instead of `@max(1, self.reserved_slots)` | `soon.zig:11` | 30–50% task-intensive | 1 line |
-| 8.2 | Only `ensure_capacity` the active queue in runner, not both | `runner.zig:255–258` | 15–20% loop overhead | 2 lines |
-| 8.3 | Run `subprocess.Popen` in thread pool executor to avoid blocking loop | `loop.py:760–765` | 10× subprocess | ~10 lines |
-| 8.4 | Decouple prune threshold from `reserved_slots` — use `ready_tasks_queue_max_capacity` only | `runner.zig:269–271` | Prevents OOM under load | 1 line |
-| 8.5 | Use `@max(extra_capacity, min_capacity)` instead of `while` loop | `callback_manager.zig:122–123` | Minor | 1 line |
-| 8.6 | Move `wakeup_eventfd` outside mutex in `dispatch` — check `ring_blocked` before acquiring lock | `soon.zig:14–20` | 5–10% threaded dispatch | Refactor |
+| # | Fix | File(s) | Expected Gain | Lesson Check |
+|---|-----|---------|---------------|--------------|
+| 8.1 | Remove `reserved_slots` from `dispatch_nonthreadsafe` capacity — pass `1` instead of `@max(1, self.reserved_slots)` | `soon.zig:11` | 30–50% task-intensive | ✅ All 5 lessons |
+| 8.2 | Only `ensure_capacity` the active queue in runner, not both | `runner.zig:255–258` | 15–20% loop overhead | ✅ All 5 lessons |
+| 8.3 | Reduce pidfd exit timer from 100ms → 1ms (or exponential backoff 1/10/100/1000ms) | `transport.zig:199,217,261` | 10× subprocess | ✅ All 5 lessons |
+| 8.3b | Swap eventfd wake AFTER queue append in `dispatch_nonthreadsafe` | `soon.zig:7–11` | Minor clarity | ✅ No behavioral change |
+| 8.4 | Decouple prune threshold from `reserved_slots` — use `ready_tasks_queue_max_capacity` only | `runner.zig:269–271` | Prevents OOM, helps GC | ⚠️ Verify prune safety (Lesson 4) |
+| 8.5 | Use `@max(extra_capacity, min_capacity)` instead of `while` loop | `callback_manager.zig:122–123` | Minor | ✅ Pure optimization |
 
-#### Phase 2: Structural Fixes (Medium Risk) — Estimate 1–2 days
+#### Phase 2: Structural Fixes (Medium Risk, Guarded by Lessons) — Estimate 1–2 days
 
-| # | Fix | Expected Gain | Difficulty |
-|---|-----|---------------|------------|
-| 8.7 | Shrink mutex critical section in runner — only hold mutex for queue swap, not hook execution | 20–40% overall | Architectural |
-| 8.8 | Switch to lock-free SPSC queue for `call_soon_threadsafe` → drain under mutex | Eliminates threaded dispatch bottleneck | New data structure |
-| 8.9 | Batch capacity reservations — `reserve_slots` only grows when threshold exceeded, not per-call | Prevents repeated growth checks | ~20 lines |
+| # | Fix | Expected Gain | Key Constraint |
+|---|-----|---------------|----------------|
+| 8.6 | Move hook execution outside mutex in runner (keep queue swap + sleep check atomic) | 20–30% loop throughput | **Must preserve atomic sleep check** (Lesson 1): `queue_empty_check + ring_blocked_set + sleep` must be atomic. |
+| 8.7 | Batch capacity reservations — `reserve_slots` only grows when threshold exceeded | Prevents repeated growth checks | Keep reservation atomic with queue append under mutex. |
+| 8.8 | Lock-free SPSC queue for `call_soon_threadsafe` → drain under mutex | Eliminates background thread contention | **Must add tp_traverse to drain buffer** (Lesson 3). **Must use offset+executed flags** (Lesson 4). |
 
-#### Phase 3: Advanced (High Risk) — Estimate 1 week+
+#### Phase 3: Advanced (High Risk, Long Term) — Estimate 1 week+
 
-| # | Fix | Expected Gain | Difficulty |
-|---|-----|---------------|------------|
-| 8.10 | Separate lock for io_uring operations vs ready queue — allow concurrent IO submission and callback dispatch | Enables io_uring-native throughput | Major refactor |
-| 8.11 | Budget-based GIL yield in `call_once` — after N callbacks or T µs, release/reacquire GIL | Better free-threading fairness | ~30 lines |
-| 8.12 | Dedicated thread pool for `subprocess.Popen` via `posix_spawn` to avoid `fork()` entirely | 20× subprocess (avoids COW page fault storm) | Python 3.8+ API |
+| # | Fix | Expected Gain | Key Constraint |
+|---|-----|---------------|----------------|
+| 8.9 | Budget-based GIL yield in `call_once` — after N callbacks or T µs, release/reacquire GIL | Free-threading fairness | Must ensure all callback data consumed before yield (Lesson 4 + 5). |
+| 8.10 | Separate lock for io_uring vs ready queue — concurrent IO submit + callback dispatch | io_uring-native throughput | Major refactor. Must maintain atomic sleep check across two locks. |
+| 8.11 | io_uring IORING_OP_POLL_ADD on pidfd for subprocess — instant exit detection | Sub-millisecond subprocess exit | Replace timer-based polling entirely. Linux 5.3+ only. |
+| 8.12 | posix_spawn instead of fork() for subprocess | Avoid COW page fault storm | Python 3.8+ API. Must handle close_fds enumeration. |
+
+---
+
+### Alignment Summary
+
+| Fix | L1: Atomic Sleep | L2: EINTR | L3: GC Traversal | L4: Safe Traversal | L5: Loop Resilience |
+|-----|:---:|:---:|:---:|:---:|:---:|
+| 8.1 (capacity) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 8.2 (single queue) | ✅ | ✅ | ✅ Improve | ✅ | ✅ |
+| 8.3 (pidfd timer) | ✅ | ✅ | ⚠️ Verify | ✅ | ✅ |
+| 8.4 (prune) | ✅ | ✅ | ✅ Improve | ⚠️ Verify | ✅ |
+| 8.5 (@max) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 8.6 (hooks outside mutex) | ⚠️ Must preserve | ✅ | ✅ | ✅ | ✅ |
+| 8.7 (batch reserve) | ⚠️ Atomic check | ✅ | ✅ | ✅ | ✅ |
+| 8.8 (SPSC queue) | ⚠️ Drain under mutex | ✅ | ⚠️ Need traverse | ⚠️ Need offset | ✅ |
+| 8.9 (GIL yield) | ✅ | ✅ | ✅ | ⚠️ Consume first | ✅ |
+| 8.10 (separate locks) | ⚠️ Two-lock atomic | ✅ | ⚠️ Changed paths | ⚠️ Changed paths | ✅ |
+| 8.11 (pidfd poll) | ✅ | ✅ | ⚠️ Release popen | ✅ | ✅ |
+| 8.12 (posix_spawn) | ✅ | ✅ | ⚠️ Track in dict | ✅ | ✅ |
 
 ---
 
@@ -508,4 +666,4 @@ The cumulative overhead pushes 7680 dispatch cycles past 30s, causing the benchm
 
 - **uvloop source:** https://github.com/MagicStack/uvloop
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md`
-- **Test results:** 262 internal tests + standard asyncio suite modules PASS on all 4 versions (3.13, 3.14, 3.13t, 3.14t). All 6 I/O benchmarks pass (tcp_echo, socket_ops, udp_pingpong, subprocess_bench, unix_echo, etc.).
+- **Test results:** 262 internal tests + standard asyncio suite modules PASS on all 4 versions (3.13, 3.14, 3.13t, 3.14t). 5/6 I/O benchmarks pass (tcp_echo, unix_echo, udp_pingpong, subprocess_bench, task_spawn); socket_ops TIMEOUT (see Priority 8).
