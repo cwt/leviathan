@@ -601,11 +601,18 @@ Any new queue data structure holding `Callback` objects (which contain `PyObject
 
 | # | Fix | File(s) | Expected Gain | Lesson Check |
 |---|-----|---------|---------------|--------------|
-| 8.1 | Remove `reserved_slots` from `dispatch_nonthreadsafe` capacity + swap eventfd order | `soon.zig:7–11` | Socket Ops: TIMEOUT → 0.27× (PASS) | ✅ All 5 lessons — **DONE (rev 418)** |
-| 8.2 | ~~Only `ensure_capacity` active queue~~ | `runner.zig:255–258` | **RETRACTED** — `ensure_capacity()` already short-circuits internally; inactive queue check costs 1 inlined branch (negligible). Aggressive version (skip entirely) causes test hangs. | N/A |
-| 8.3 | Reduce pidfd exit timer from 100ms → 1ms (or exponential backoff 1/10/100/1000ms) | `transport.zig:199,217,261` | 10× subprocess (est.) | ✅ All 5 lessons |
-| 8.4 | Decouple prune threshold from `reserved_slots` — use `ready_tasks_queue_max_capacity` only | `runner.zig:269–271` | Prevents OOM, helps GC | ⚠️ Verify prune safety (Lesson 4) |
-| 8.5 | Use `@max(extra_capacity, min_capacity)` instead of `while` loop | `callback_manager.zig:122–123` | Minor | ✅ Pure optimization |
+| 8.1 | 🔴 P1 | Remove `reserved_slots` from capacity param | Socket Ops: hang→complete | ✅ DONE (rev 418) |
+| 8.2 | — | ~~Skip inactive queue ensure_capacity~~ | Retracted (no-op) | ❌ |
+| 8.3 | 🔴 P1 | pidfd timer 100ms→1ms backoff | Subprocess: 3.1× faster | ✅ DONE (rev 421) |
+| 8.4 | 🔴 P1 | Prune decoupled from `reserved_slots` | Prevents OOM under load | ✅ DONE (rev 422) |
+| 8.5 | 🔴 P1 | `@max` instead of `while` loop | Code cleanup | ✅ DONE (rev 423) |
+| 8.6 | 🟡 P2 | Check hooks outside mutex | Marginal (hooks lightweight) | ✅ DONE (rev 424) |
+| 8.7 | 🟡 P2 | Skip redundant ensure_capacity in reserve_slots | Marginal (already short-circuits) | ✅ DONE (rev 425) |
+| 8.8 | 🟡 P2 | ~~Lock-free SPSC queue~~ | SKIPPED — low ROI, GC complexity | ❌ |
+| 8.9 | 🔵 P3 | GIL yield every 64 callbacks | Free-threading fairness | ✅ DONE (rev 426) |
+| 8.10 | 🔵 P3 | ~~Separate io_uring lock~~ | SKIPPED — won't fix 0.42× gap | ❌ |
+| 8.11 | 🔵 P3 | IORING_OP_POLL_ADD on pidfd | Sub-ms subprocess (needs IO layer support) | ⬜ Deferred |
+| 8.12 | 🔵 P3 | posix_spawn for subprocess | Subprocess scaling (Python 3.8+) | ⬜ Deferred |
 
 #### Phase 2: Structural Fixes (Medium Risk, Guarded by Lessons) — Estimate 1–2 days
 
