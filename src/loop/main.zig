@@ -142,7 +142,10 @@ pub fn release(self: *Loop) void {
 
 pub inline fn reserve_slots(self: *Loop, amount: usize) !void {
     const new_value = self.reserved_slots + amount;
-    try self.ready_tasks_queues[self.ready_tasks_queue_index].ensure_capacity(new_value);
+    const active_queue = &self.ready_tasks_queues[self.ready_tasks_queue_index];
+    if (active_queue.available_slots < new_value) {
+        try active_queue.ensure_capacity(new_value);
+    }
     self.reserved_slots = new_value;
 }
 
