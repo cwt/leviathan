@@ -76,6 +76,21 @@ pub fn RingBuffer(comptime N: usize) type {
         pub inline fn count(self: *const Self) usize {
             return self.write_idx - self.read_idx;
         }
+
+        pub fn try_push(self: *Self, callback: Callback) bool {
+            if (self.is_full()) return false;
+            const idx = self.write_idx % N;
+            self.callbacks[idx] = callback;
+            self.executed.unset(idx);
+            self.write_idx += 1;
+            return true;
+        }
+
+        pub fn push(self: *Self, callback: Callback) void {
+            if (!self.try_push(callback)) {
+                @panic("RingBuffer overflow");
+            }
+        }
     };
 }
 
@@ -779,4 +794,26 @@ test "RingBuffer basic properties" {
     rb.read_idx = 8;
     try std.testing.expect(rb.is_empty());
     try std.testing.expectEqual(@as(usize, 0), rb.count());
+}
+
+test "RingBuffer push" {
+    const RB = RingBuffer(4);
+    var rb = RB.init();
+
+    const callback = Callback{
+        .func = undefined,
+        .cleanup = null,
+        .data = .{ .user_data = null, .exception_context = null }
+    };
+
+    try std.testing.expect(rb.try_push(callback));
+    try std.testing.expectEqual(@as(usize, 1), rb.count());
+    try std.testing.expect(!rb.executed.isSet(0));
+
+    try std.testing.expect(rb.try_push(callback));
+    try std.testing.expect(rb.try_push(callback));
+    try std.testing.expect(rb.try_push(callback));
+    try std.testing.expect(!rb.try_push(callback)); // full
+
+    try std.testing.expectEqual(@as(usize, 4), rb.count());
 }
