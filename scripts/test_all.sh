@@ -155,7 +155,9 @@ for py in python3.13 python3.14 python3.13t python3.14t; do
         continue
     fi
 
-    cp zig-out/lib/libleviathan.so leviathan/leviathan_zig.so
+    ext_suffix=$("$py" -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+    cp zig-out/lib/libleviathan.so "leviathan/leviathan_zig${ext_suffix}"
+    rm -f leviathan/leviathan_zig.so
     run_tests "$py" "$py" || true
     run_std_tests "$py" "$py" || true
     echo ""

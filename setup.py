@@ -86,8 +86,10 @@ class ZigBuildExtCommand(build_ext):
     def copy_zig_files(self) -> None:
         build_dir = "./zig-out/lib"
 
+        ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
         src_path = os.path.join(build_dir, "libleviathan.so")
-        dest_path = os.path.join("build", "lib", "leviathan", "leviathan_zig.so")
+        dest_path = os.path.join("build", "lib", "leviathan", f"leviathan_zig{ext_suffix}")
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         shutil.copyfile(src_path, dest_path)
 
         st = os.stat(dest_path)
@@ -131,7 +133,7 @@ setup(
         exclude=["tests", "zig-out", "src"], include=["leviathan", "leviathan.*"]
     ),
     package_data={
-        "leviathan": ["leviathan_zig.so"],
+        "leviathan": ["leviathan_zig*.so"],
         "": ["tests/"],
     },
     cmdclass={
