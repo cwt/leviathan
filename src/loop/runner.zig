@@ -268,7 +268,7 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
 
         const callbacks_executed = try call_once(
             ready_tasks_queue,
-            @max(self.reserved_slots, ready_tasks_queue_max_capacity),
+            ready_tasks_queue_max_capacity,
             loop_obj
         );
 
