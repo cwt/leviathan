@@ -32,7 +32,7 @@ def test_subprocess_exec_basic() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/true"]
+            SubprocessProtocolStub, "/usr/bin/true"
         )
         assert transport.get_pid() > 0
         await protocol.exited
@@ -46,7 +46,7 @@ def test_subprocess_exec_sleep() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/sleep", "0.1"]
+            SubprocessProtocolStub, "/usr/bin/sleep", "0.1"
         )
         await protocol.exited
         assert protocol.exit_code == 0
@@ -59,7 +59,7 @@ def test_subprocess_get_pid() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/true"]
+            SubprocessProtocolStub, "/usr/bin/true"
         )
         pid = transport.get_pid()
         assert isinstance(pid, int)
@@ -73,7 +73,7 @@ def test_subprocess_kill() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/sleep", "10"]
+            SubprocessProtocolStub, "/usr/bin/sleep", "10"
         )
         transport.kill()
         await protocol.exited
@@ -88,7 +88,7 @@ def test_subprocess_terminate() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/sleep", "10"]
+            SubprocessProtocolStub, "/usr/bin/sleep", "10"
         )
         transport.terminate()
         await protocol.exited
@@ -102,7 +102,7 @@ def test_subprocess_send_signal() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/sleep", "10"]
+            SubprocessProtocolStub, "/usr/bin/sleep", "10"
         )
         import signal
         transport.send_signal(signal.SIGTERM)
@@ -117,7 +117,7 @@ def test_subprocess_returncode_none_before_exit() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/sleep", "5"]
+            SubprocessProtocolStub, "/usr/bin/sleep", "5"
         )
         assert transport.get_returncode() is None
         transport.kill()
@@ -131,7 +131,7 @@ def test_subprocess_missing_factory() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         with pytest.raises((ValueError, TypeError)):
-            await loop.subprocess_exec(None, ["/usr/bin/true"])
+            await loop.subprocess_exec(None, "/usr/bin/true")
 
     leviathan.run(main())
 
@@ -140,7 +140,7 @@ def test_subprocess_popen_cleaned_on_success() -> None:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.subprocess_exec(
-            SubprocessProtocolStub, ["/usr/bin/true"]
+            SubprocessProtocolStub, "/usr/bin/true"
         )
         pid = transport.get_pid()
         # Must be cleaned from global dict immediately

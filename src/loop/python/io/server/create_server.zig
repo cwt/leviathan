@@ -97,9 +97,9 @@ inline fn z_loop_create_server(
     }
 
     var creation_data = ServerCreationData{};
-    creation_data.py_host = args[1].?;
+    creation_data.py_host = python_c.py_newref(args[1].?);
 
-    if (args.len > 2) creation_data.py_port = args[2].?;
+    if (args.len > 2) creation_data.py_port = python_c.py_newref(args[2].?);
 
     try python_c.parse_vector_call_kwargs(
         knames, args.ptr + args.len,

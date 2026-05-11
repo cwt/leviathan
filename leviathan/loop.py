@@ -749,29 +749,109 @@ class Loop(_Loop):
 
     async def subprocess_exec(
         self, protocol_factory: Callable[[], asyncio.BaseProtocol],
-        args: Any, *, stdin: Any = None, stdout: Any = None,
+        program: Any, *args: Any,
+        stdin: Any = None, stdout: Any = None,
         stderr: Any = None, cwd: str|None = None,
         env: dict[str, str]|None = None, pass_fds: Any = None,
         **kwargs: Any,
     ) -> tuple[Any, Any]:
         import subprocess
+        cmd = (program, *args)
         popen = subprocess.Popen(
-            args, stdin=subprocess.DEVNULL if stdin is None else stdin,
+            cmd, stdin=subprocess.DEVNULL if stdin is None else stdin,
             stdout=subprocess.DEVNULL if stdout is None else stdout,
             stderr=subprocess.DEVNULL if stderr is None else stderr,
             cwd=cwd, env=env, pass_fds=pass_fds if pass_fds is not None else (),
         )
         _subprocess_popens[popen.pid] = popen
         try:
+            exit_future = self.create_future()
+
+            orig_factory = protocol_factory
+
+            class _TransportWrapper:
+                def __init__(self, transport):
+                    self._transport = transport
+                    self._popen = popen
+                    self._exit_future = exit_future
+
+                def __getattr__(self, name):
+                    return getattr(self._transport, name)
+
+                def get_pipe_transport(self, fd):
+                    return None
+
+                def is_closing(self):
+                    return self._transport.is_closing()
+
+                def close(self):
+                    self._transport.close()
+
+                def get_pid(self):
+                    return self._transport.get_pid()
+
+                def get_returncode(self):
+                    return self._transport.get_returncode()
+
+                def kill(self):
+                    self._transport.kill()
+
+                def terminate(self):
+                    self._transport.terminate()
+
+                def send_signal(self, sig):
+                    self._transport.send_signal(sig)
+
+                @property
+                def _popen(self):
+                    return popen
+
+                @_popen.setter
+                def _popen(self, val):
+                    nonlocal popen
+                    popen = val
+
+                async def _wait(self):
+                    rc = self.get_returncode()
+                    if rc is not None:
+                        return rc
+                    self._exit_future = exit_future
+                    return await exit_future
+
+            def _wrapped_factory():
+                protocol = orig_factory()
+                orig_cm = protocol.connection_made
+
+                def _connection_made(transport):
+                    wrapper = _TransportWrapper(transport)
+                    orig_cm(wrapper)
+
+                protocol.connection_made = _connection_made
+
+                orig_cl = protocol.connection_lost
+
+                def _connection_lost(exc):
+                    try:
+                        orig_cl(exc)
+                    finally:
+                        if not exit_future.done():
+                            try:
+                                rc = transport.get_returncode()
+                                if rc is not None:
+                                    exit_future.set_result(rc)
+                                else:
+                                    exit_future.set_result(-1)
+                            except BaseException:
+                                exit_future.set_result(-1)
+
+                protocol.connection_lost = _connection_lost
+                return protocol
+
             transport, protocol = await _Loop.subprocess_exec(
-                self, protocol_factory, pid=popen.pid,
+                self, _wrapped_factory, pid=popen.pid,
             )
-            # Keep popen alive on the transport so Popen.__del__ doesn't
-            # reap the child (via waitpid) before the transport does.
-            # The transport needs the exit status from waitpid to set
-            # its returncode; if Popen steals it, transport gets ECHILD.
-            transport._popen = popen
-            return transport, protocol
+            wrapper = _TransportWrapper(transport)
+            return wrapper, protocol
         except BaseException:
             if popen.poll() is None:
                 popen.kill()
