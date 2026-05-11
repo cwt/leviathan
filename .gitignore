@@ -23,3 +23,6 @@ coverage/
 .aider*
 
 benchmarks/output/
+benchmarks/output.*/
+
+tmp*.py
