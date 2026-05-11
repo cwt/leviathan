@@ -46,6 +46,39 @@ pub const Callback = struct {
     executed: bool = false
 };
 
+pub fn RingBuffer(comptime N: usize) type {
+    return struct {
+        const Self = @This();
+        pub const BitSet = std.bit_set.StaticBitSet(N);
+
+        callbacks: [N]Callback,
+        read_idx: usize,
+        write_idx: usize,
+        executed: BitSet,
+
+        pub fn init() Self {
+            return .{
+                .callbacks = undefined,
+                .read_idx = 0,
+                .write_idx = 0,
+                .executed = BitSet.initEmpty(),
+            };
+        }
+
+        pub inline fn is_full(self: *const Self) bool {
+            return (self.write_idx - self.read_idx) == N;
+        }
+
+        pub inline fn is_empty(self: *const Self) bool {
+            return self.read_idx == self.write_idx;
+        }
+
+        pub inline fn count(self: *const Self) usize {
+            return self.write_idx - self.read_idx;
+        }
+    };
+}
+
 pub const CallbacksSet = struct {
     callbacks: []Callback,
     callbacks_num: usize,
@@ -720,4 +753,30 @@ test "Queue try_append returns null when full" {
 
     try std.testing.expect(set_queue.try_append(&callback) != null);
     try std.testing.expect(set_queue.try_append(&callback) == null);
+}
+
+test "RingBuffer basic properties" {
+    const RB = RingBuffer(8);
+    var rb = RB.init();
+
+    try std.testing.expect(rb.is_empty());
+    try std.testing.expect(!rb.is_full());
+    try std.testing.expectEqual(@as(usize, 0), rb.count());
+
+    rb.write_idx = 4;
+    try std.testing.expect(!rb.is_empty());
+    try std.testing.expect(!rb.is_full());
+    try std.testing.expectEqual(@as(usize, 4), rb.count());
+
+    rb.write_idx = 8;
+    try std.testing.expect(rb.is_full());
+    try std.testing.expectEqual(@as(usize, 8), rb.count());
+
+    rb.read_idx = 4;
+    try std.testing.expect(!rb.is_full());
+    try std.testing.expectEqual(@as(usize, 4), rb.count());
+
+    rb.read_idx = 8;
+    try std.testing.expect(rb.is_empty());
+    try std.testing.expectEqual(@as(usize, 0), rb.count());
 }
