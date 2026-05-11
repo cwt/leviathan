@@ -91,6 +91,18 @@ pub fn RingBuffer(comptime N: usize) type {
                 @panic("RingBuffer overflow");
             }
         }
+
+        pub fn next(self: *Self) ?*Callback {
+            if (self.is_empty()) return null;
+            const idx = self.read_idx % N;
+            return &self.callbacks[idx];
+        }
+
+        pub inline fn consume(self: *Self) void {
+            const idx = self.read_idx % N;
+            self.executed.set(idx);
+            self.read_idx += 1;
+        }
     };
 }
 
@@ -816,4 +828,15 @@ test "RingBuffer push" {
     try std.testing.expect(!rb.try_push(callback)); // full
 
     try std.testing.expectEqual(@as(usize, 4), rb.count());
+
+    var i: usize = 0;
+    while (rb.next()) |cb| {
+        _ = cb;
+        try std.testing.expect(!rb.executed.isSet(i));
+        rb.consume();
+        try std.testing.expect(rb.executed.isSet(i));
+        i += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 4), i);
+    try std.testing.expect(rb.is_empty());
 }
