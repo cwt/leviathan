@@ -17,6 +17,7 @@ pub const SubprocessTransportObject = extern struct {
 
     pidfd_task_id: usize,
     closed: bool,
+    poll_count: u32,
 };
 
 fn subprocess_dealloc(self: ?*SubprocessTransportObject) callconv(.c) void {
@@ -155,22 +156,27 @@ pub fn create_type() !void {
     ) orelse return error.PythonError);
 }
 
+fn pidfd_timer_duration(poll_count: u32) std.os.linux.timespec {
+    return switch (poll_count) {
+        0 => .{ .sec = 0, .nsec = 1_000_000 },
+        1 => .{ .sec = 0, .nsec = 5_000_000 },
+        2 => .{ .sec = 0, .nsec = 25_000_000 },
+        else => .{ .sec = 0, .nsec = 100_000_000 },
+    };
+}
+
 fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
     const transport: *SubprocessTransportObject = @alignCast(@ptrCast(data.user_data.?));
     defer python_c.py_decref(@ptrCast(transport));
 
     if (data.cancelled or transport.closed) return;
 
-    // Use raw syscall to handle ECHILD (process already reaped by Python's Popen.__del__)
     var status: u32 = undefined;
     const wpid = std.os.linux.wait4(transport.pid, &status, std.posix.W.NOHANG, null);
-    // Linux syscalls return -ERRNO as large usize values
     if (wpid >= 0xFFFFF000) {
         const errno: u32 = @truncate(~wpid + 1);
         const err: std.os.linux.E = @enumFromInt(errno);
         if (err == .CHILD) {
-            // Process already reaped — shouldn't happen if Popen is kept alive
-            // But handle gracefully just in case
             transport.returncode = python_c.PyLong_FromLong(-1);
             if (transport.protocol) |proto| {
                 const pe = python_c.PyObject_GetAttrString(proto, "process_exited\x00");
@@ -190,13 +196,14 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
             transport.popen = null;
             return;
         }
-        // Still running — re-arm the timer
+        transport.poll_count += 1;
+        const duration = pidfd_timer_duration(transport.poll_count);
         const py_loop = transport.loop orelse return;
         const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(py_loop)));
         python_c.py_incref(@ptrCast(transport));
         _ = try loop_data.io.queue(.{
             .WaitTimer = .{
-                .duration = .{ .sec = 0, .nsec = 100_000_000 },
+                .duration = duration,
                 .delay_type = .Relative,
                 .callback = .{
                     .func = &pidfd_exit_callback,
@@ -208,13 +215,14 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
         return;
     }
     if (wpid != @as(usize, @intCast(transport.pid))) {
-        // Still running — re-arm the timer
+        transport.poll_count += 1;
+        const duration = pidfd_timer_duration(transport.poll_count);
         const py_loop = transport.loop orelse return;
         const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(py_loop)));
         python_c.py_incref(@ptrCast(transport));
         _ = try loop_data.io.queue(.{
             .WaitTimer = .{
-                .duration = .{ .sec = 0, .nsec = 100_000_000 },
+                .duration = duration,
                 .delay_type = .Relative,
                 .callback = .{
                     .func = &pidfd_exit_callback,
@@ -247,7 +255,6 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
         python_c.py_decref(r2);
     }
 
-    // Popen no longer needed once process has exited; release our reference.
     python_c.py_xdecref(transport.popen);
     transport.popen = null;
 }
@@ -258,7 +265,7 @@ pub fn start_exit_watcher(transport: *SubprocessTransportObject, loop: *LoopObje
     python_c.py_incref(@ptrCast(transport));
     transport.pidfd_task_id = try loop_data.io.queue(.{
         .WaitTimer = .{
-            .duration = .{ .sec = 0, .nsec = 100_000_000 },
+            .duration = pidfd_timer_duration(transport.poll_count),
             .delay_type = .Relative,
             .callback = .{
                 .func = &pidfd_exit_callback,
@@ -281,6 +288,7 @@ pub fn new_with_pid(
     self.returncode = null;
     self.pidfd_task_id = 0;
     self.closed = false;
+    self.poll_count = 0;
 
     return self;
 }
