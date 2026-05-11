@@ -103,6 +103,12 @@ pub fn RingBuffer(comptime N: usize) type {
             self.executed.set(idx);
             self.read_idx += 1;
         }
+
+        pub fn reset(self: *Self) void {
+            self.read_idx = 0;
+            self.write_idx = 0;
+            self.executed = BitSet.initEmpty();
+        }
     };
 }
 
@@ -839,4 +845,9 @@ test "RingBuffer push" {
     }
     try std.testing.expectEqual(@as(usize, 4), i);
     try std.testing.expect(rb.is_empty());
+
+    rb.reset();
+    try std.testing.expectEqual(@as(usize, 0), rb.read_idx);
+    try std.testing.expectEqual(@as(usize, 0), rb.write_idx);
+    try std.testing.expectEqual(@as(usize, 0), rb.executed.count());
 }
