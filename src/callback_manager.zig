@@ -283,6 +283,8 @@ pub fn execute_callbacks(
     var callbacks_executed: usize = 0;
     defer sets_queue.available_slots += callbacks_executed;
 
+    var yield_counter: usize = 0;
+
     while (_node) |node| {
         _node = node.next;
         const callbacks_set = &node.data;
@@ -310,7 +312,14 @@ pub fn execute_callbacks(
                     if (callback.cleanup) |cleanup| {
                         cleanup(callback.data.user_data);
                     }
-                    callbacks_set.offset += 1;
+            callbacks_set.offset += 1;
+
+            yield_counter += 1;
+            if (!builtin.is_test and yield_counter == 64) {
+                yield_counter = 0;
+                const ts = python_c.PyEval_SaveThread();
+                _ = python_c.PyEval_RestoreThread(ts);
+            }
                 }
 
                 const new_offset = (
@@ -347,6 +356,13 @@ pub fn execute_callbacks(
                 }
             }
             callbacks_set.offset += 1;
+
+            yield_counter += 1;
+            if (!builtin.is_test and yield_counter == 64) {
+                yield_counter = 0;
+                const ts = python_c.PyEval_SaveThread();
+                _ = python_c.PyEval_RestoreThread(ts);
+            }
         }
         callbacks_executed += callbacks_num - offset;
 

@@ -589,4 +589,8 @@ pub fn deinitialize_object_fields(
     }
 }
 
+pub const PyThreadState = opaque {};
+pub extern fn PyEval_SaveThread() ?*PyThreadState;
+pub extern fn PyEval_RestoreThread(?*PyThreadState) void;
+
 const Python = @This();
