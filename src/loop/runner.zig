@@ -258,13 +258,14 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
         }
 
         try poll_blocking_events(self, mutex, wait_for_blocking_events, ready_tasks_queue);
-        try execute_hooks(&self.check_hooks);
 
         ready_tasks_queue_index = 1 - ready_tasks_queue_index;
         self.ready_tasks_queue_index = ready_tasks_queue_index;
 
         mutex.unlock();
         defer mutex.lock();
+
+        try execute_hooks(&self.check_hooks);
 
         const callbacks_executed = try call_once(
             ready_tasks_queue,
