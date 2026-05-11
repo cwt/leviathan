@@ -246,7 +246,7 @@ Added `SSLWantReadError` and `SSLWantWriteError` to the caught exceptions in `_S
 - All `_SSLTransportWrapper` constructors now receive `shutdown_timeout=ssl_shutdown_timeout`.
 - Actual timeout enforcement during SSL shutdown is a future enhancement (requires async wrapper around `unwrap()`).
 
-### 7.11 — `resume_writing` Assertion Failure on Stream Transports — 🔴 CRITICAL
+### 7.11 — `resume_writing` Assertion Failure on Stream Transports — 🔴 CRITICAL — ✅ FIXED
 
 **Context:** Discovered during `benchmark.py` TCP echo and socket ops benchmarks.
 
@@ -260,19 +260,30 @@ Traceback (most recent call last):
 AssertionError
 ```
 
-**Analysis:** Leviathan's `StreamTransport` calls `resume_writing` when `self._paused` is `False`. This happens because the transport's flow-control state machine doesn't track pause/resume correctly — `pause_writing` sets `_paused = True` but the Zig side may trigger a write-complete callback that calls `resume_writing` before `_paused` was ever set, or the pause state gets reset prematurely. Every `drain()` → `write()` cycle on a TCP connection triggers this.
+**Root cause (two bugs):**
+1. **Zero-init:** `StreamTransportObject.is_writing` defaulted to `false` (zero-init by `tp_alloc`). On first write completion, `write_operation_completed` saw `!is_writing == true` and called `protocol.resume_writing()` even though `pause_writing` was never called.
+2. **Close race:** `close_transports()` set `is_writing = false` during close. Pending io_uring write completions that fired after close triggered spurious `resume_writing()`.
+
+**Fix (rev 411–412):**
+1. Set `instance.is_writing = true` in `stream_init_configuration()` (`src/transports/stream/constructors.zig:175`).
+2. Removed `transport.is_writing = false` from `close_transports()` in `src/transports/stream/lifecycle.zig`.
+3. Added `is_closing/closed` guard in `write_operation_completed()` in `src/transports/stream/write.zig`.
 
 **Impact:** All benchmarks using TCP stream transports (TCP echo, Socket Ops) crash or emit hundreds of assertion errors. Connections fail non-deterministically.
 
-### 7.12 — TCP Server SIGSEGV in Subprocess — 🔴 CRITICAL
+### 7.12 — TCP Server SIGSEGV in Subprocess — 🔴 CRITICAL — ✅ FIXED
 
 **Context:** Discovered during `benchmark.py` TCP echo benchmark with leviathan.
 
 **Error:** Process exits with SIGSEGV (signal 11, return code -11), no stdout/stderr output.
 
-**Analysis:** Running `leviathan.Loop` with `start_server` + `open_connection` inside a subprocess causes a segfault. The crash is deterministic at m=1024. When the same code runs in the main process (same Python interpreter, same loop), it prints assertion errors (7.11) but completes without segfault. The subprocess isolation triggers the crash — possibly a memory layout / ASLR issue, or a race condition in io_uring queue setup that only manifests in a forked subprocess.
+**Root cause:** `close_transports()` in `src/transports/stream/lifecycle.zig` set `is_writing = false` during close. Any pending io_uring write completion that fired after close saw `!is_writing == true` and called `protocol.resume_writing()`, even though `pause_writing` was never called. This triggered `assert self._paused` in asyncio/streams.py, cascading into assertion errors that corrupted the C extension's exception handling state in subprocess context.
 
-**Reproduce:** Run `benchmark.py` which spawns isolated subprocess per loop/benchmark. Leviathan `-c` mode also segfaults on TCP echo.
+**Fix (rev 412):**
+1. Removed `transport.is_writing = false` from `close_transports()` — redundant and harmful.
+2. Added `is_closing/closed` guard in `write_operation_completed()` in `src/transports/stream/write.zig`.
+
+This also resolved the 7.11 `resume_writing` assertion failure.
 
 ### 7.13 — UDP `create_datagram_endpoint` Hangs — 🔴 CRITICAL — ✅ FIXED
 
@@ -298,13 +309,23 @@ AssertionError
 
 **Tests:** `test_datagram_echo` (full round-trip with unconnected echo server), `test_datagram_get_extra_info_sockname`, `test_datagram_get_extra_info_socket`. All 261 tests pass.
 
-### 7.14 — `create_subprocess_exec` Crashes — 🟠 HIGH
+### 7.14 — `create_subprocess_exec` Crashes — 🟠 HIGH — ✅ FIXED
 
 **Context:** Discovered during `benchmark.py` Subprocess benchmark with leviathan.
 
-**Error:** Subprocess execution from a script file (not `-c`) raises an exception on `mod.BENCHMARK.function(loop, m)`. The subprocess exit handling or pipe management crashes in the Zig layer.
+**Error:** Subprocess execution from a script file (not `-c`) raises an exception.
 
-**Analysis:** Leviathan's `create_subprocess_exec` fails when the subprocess is created inside a separate script file executed by the benchmark runner. The exact error trace is truncated but the subprocess exits with an exception rather than completing normally.
+**Root cause (three issues):**
+1. Python `subprocess_exec` used old signature `(protocol_factory, args)` — asyncio 3.13+ expects `(protocol_factory, program, *args)`. Popen received a tuple containing a list instead of string arguments.
+2. C extension `SubprocessTransport` lacked `_wait()` (needed by `Process.wait()`) and `get_pipe_transport(fd)` (needed by subprocess protocol). The type has no `__dict__`, so methods couldn't be monkey-patched.
+3. SubprocessTransport missing methods caused TypeError when standard asyncio code tried to call them.
+
+**Fix (rev 414):**
+1. Changed `subprocess_exec` signature to match CPython's `BaseEventLoop`: `(protocol_factory, program, *args)`.
+2. Added `_TransportWrapper` Python class (`leviathan/loop.py:772-819`) that delegates to the C extension transport and provides `async _wait()` via an exit Future resolved when `connection_lost` fires, plus a `get_pipe_transport(fd)` stub returning None (no pipe support yet).
+3. Wrapped `protocol_factory` to intercept `connection_made`/`connection_lost`.
+
+**Tests:** 8 subprocess tests pass (basic, sleep, kill, terminate, send_signal, get_pid, returncode, popen cleanup).
 
 ---
 
@@ -328,4 +349,4 @@ AssertionError
 
 - **uvloop source:** https://github.com/MagicStack/uvloop
 - **Zig 0.15.2 docs:** `docs/zig-0.15.2/langref.md`
-- **Test results:** 193 internal tests + standard asyncio suite modules PASS on all 4 versions.
+- **Test results:** 262 internal tests + standard asyncio suite modules PASS on all 4 versions (3.13, 3.14, 3.13t, 3.14t). All 6 I/O benchmarks pass (tcp_echo, socket_ops, udp_pingpong, subprocess_bench, unix_echo, etc.).
