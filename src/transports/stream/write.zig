@@ -26,6 +26,10 @@ pub fn write_operation_completed(
         return;
     }
 
+    if (instance.is_closing or instance.closed) {
+        return;
+    }
+
     if (!instance.is_writing) {
         if (remaining_data <= instance.writing_low_water_mark) {
             instance.is_writing = true;

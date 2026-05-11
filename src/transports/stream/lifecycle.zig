@@ -36,7 +36,6 @@ pub fn close_transports(
     write_transport.close() catch {};
 
     transport.is_reading = false;
-    transport.is_writing = false;
 
     if (closed_already) return;
 
