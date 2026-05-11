@@ -3,12 +3,12 @@ const Loop = @import("../main.zig");
 const CallbackManager = @import("callback_manager");
 
 pub inline fn dispatch_nonthreadsafe(self: *Loop, callback: *const CallbackManager.Callback) !void {
+    const ready_queue = &self.ready_tasks_queues[self.ready_tasks_queue_index];
+    _ = try ready_queue.append(callback, 1);
+
     if (self.io.ring_blocked) {
         try self.io.wakeup_eventfd();
     }
-
-    const ready_queue = &self.ready_tasks_queues[self.ready_tasks_queue_index];
-    _ = try ready_queue.append(callback, @max(1, self.reserved_slots));
 }
 
 pub inline fn dispatch(self: *Loop, callback: *const CallbackManager.Callback) !void {
