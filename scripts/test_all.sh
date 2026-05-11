@@ -174,17 +174,6 @@ else
     FAIL=$((FAIL + 1))
 fi || true
 
-printf "${YELLOW}[zig coverage]${NC} Building test objects for coverage...\n"
-if zig build test-objects $ZIG_OPTS 2>/dev/null; then
-    printf "${YELLOW}[zig coverage]${NC} Running under kcov...\n"
-    mkdir -p coverage/zig
-    for bin in leviathan utils callback_manager; do
-        kcov --include-pattern="$ROOT/src/" coverage/zig/$bin zig-out/bin/$bin >/dev/null 2>&1
-    done
-    printf "${GREEN}[zig coverage]${NC} Reports in coverage/zig/\n"
-else
-    printf "${RED}[zig coverage]${NC} BUILD FAILED\n"
-fi || true
 
 echo ""
 printf "=== Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC} ===\n" "$PASS" "$FAIL"
