@@ -764,3 +764,49 @@ async def _test_stream_transport_get_write_buffer_limits() -> None:
 
 def test_stream_transport_get_write_buffer_limits() -> None:
     leviathan.run(_test_stream_transport_get_write_buffer_limits())
+
+
+async def _test_stream_transport_is_writing_initialized() -> None:
+    loop = asyncio.get_running_loop()
+    server_socket, client_socket = socket.socketpair()
+    server_socket.setblocking(False)
+    client_socket.setblocking(False)
+
+    resume_called_before_pause = False
+    pause_called = False
+
+    class TrackingProtocol(asyncio.Protocol):
+        def connection_made(self, transport):
+            pass
+        def data_received(self, data):
+            pass
+        def pause_writing(self):
+            nonlocal pause_called
+            pause_called = True
+        def resume_writing(self):
+            nonlocal resume_called_before_pause
+            if not pause_called:
+                resume_called_before_pause = True
+        def connection_lost(self, exc):
+            pass
+
+    proto = TrackingProtocol()
+    transport = StreamTransport(server_socket.fileno(), proto, loop)
+    try:
+        transport.write(b"hello")
+        await asyncio.sleep(0.1)
+        assert not resume_called_before_pause, (
+            "resume_writing called before pause_writing "
+            "- is_writing was not initialized to true"
+        )
+
+        transport.set_write_buffer_limits(high=10, low=5)
+        transport.write(b"x" * 20)
+        await asyncio.sleep(0.1)
+        assert pause_called, "pause_writing should be called when buffer exceeds high watermark"
+    finally:
+        transport.close()
+        client_socket.close()
+
+def test_stream_transport_is_writing_initialized() -> None:
+    leviathan.run(_test_stream_transport_is_writing_initialized())

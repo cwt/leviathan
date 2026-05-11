@@ -246,6 +246,52 @@ Added `SSLWantReadError` and `SSLWantWriteError` to the caught exceptions in `_S
 - All `_SSLTransportWrapper` constructors now receive `shutdown_timeout=ssl_shutdown_timeout`.
 - Actual timeout enforcement during SSL shutdown is a future enhancement (requires async wrapper around `unwrap()`).
 
+### 7.11 — `resume_writing` Assertion Failure on Stream Transports — 🔴 CRITICAL
+
+**Context:** Discovered during `benchmark.py` TCP echo and socket ops benchmarks.
+
+**Error:**
+```
+Failed to complete write operation on transport
+transport: <leviathan.StreamTransport object at 0x...>
+Traceback (most recent call last):
+  File "/usr/lib64/python3.14/asyncio/streams.py", line 142, in resume_writing
+    assert self._paused
+AssertionError
+```
+
+**Analysis:** Leviathan's `StreamTransport` calls `resume_writing` when `self._paused` is `False`. This happens because the transport's flow-control state machine doesn't track pause/resume correctly — `pause_writing` sets `_paused = True` but the Zig side may trigger a write-complete callback that calls `resume_writing` before `_paused` was ever set, or the pause state gets reset prematurely. Every `drain()` → `write()` cycle on a TCP connection triggers this.
+
+**Impact:** All benchmarks using TCP stream transports (TCP echo, Socket Ops) crash or emit hundreds of assertion errors. Connections fail non-deterministically.
+
+### 7.12 — TCP Server SIGSEGV in Subprocess — 🔴 CRITICAL
+
+**Context:** Discovered during `benchmark.py` TCP echo benchmark with leviathan.
+
+**Error:** Process exits with SIGSEGV (signal 11, return code -11), no stdout/stderr output.
+
+**Analysis:** Running `leviathan.Loop` with `start_server` + `open_connection` inside a subprocess causes a segfault. The crash is deterministic at m=1024. When the same code runs in the main process (same Python interpreter, same loop), it prints assertion errors (7.11) but completes without segfault. The subprocess isolation triggers the crash — possibly a memory layout / ASLR issue, or a race condition in io_uring queue setup that only manifests in a forked subprocess.
+
+**Reproduce:** Run `benchmark.py` which spawns isolated subprocess per loop/benchmark. Leviathan `-c` mode also segfaults on TCP echo.
+
+### 7.13 — UDP `create_datagram_endpoint` Hangs — 🔴 CRITICAL
+
+**Context:** Discovered during `benchmark.py` UDP Ping-Pong benchmark with leviathan.
+
+**Error:** `loop.create_datagram_endpoint()` with a protocol that sends and receives datagrams hangs indefinitely. No timeout fires — the process blocks forever in `run_until_complete`.
+
+**Analysis:** Leviathan's UDP datagram endpoint fails to process incoming datagrams after the initial send. The `datagram_received` callback is never invoked, and future never resolves. Direct test (`loop.create_datagram_endpoint(Protocol, local_addr=(...))` + `transport.sendto()` on a connected socket) works for the initial send but the response never arrives at the protocol. Likely a missing io_uring recv submission for UDP sockets, or the recv completion event is not dispatched to the protocol.
+
+**Note:** `get_extra_info("sockname")` also returns `None` for UDP transports — only `get_extra_info("socket")` works.
+
+### 7.14 — `create_subprocess_exec` Crashes — 🟠 HIGH
+
+**Context:** Discovered during `benchmark.py` Subprocess benchmark with leviathan.
+
+**Error:** Subprocess execution from a script file (not `-c`) raises an exception on `mod.BENCHMARK.function(loop, m)`. The subprocess exit handling or pipe management crashes in the Zig layer.
+
+**Analysis:** Leviathan's `create_subprocess_exec` fails when the subprocess is created inside a separate script file executed by the benchmark runner. The exact error trace is truncated but the subprocess exits with an exception rather than completing normally.
+
 ---
 
 ## ✅ Completed Next Steps
