@@ -119,9 +119,7 @@ pub const CallbacksSetsQueue = struct {
             .ReleaseSmall => 32,
             else => 128
         });
-        while (extra_capacity < min_capacity) {
-            extra_capacity *= 2;
-        }
+        extra_capacity = @max(extra_capacity, min_capacity);
 
         try new_node.data.init(self.queue.allocator, extra_capacity);
         errdefer new_node.data.deinit(self.queue.allocator);
@@ -454,8 +452,8 @@ test "Add new callback to queue and immediately execute" {
 
     const ret = try set_queue.append(&callback, 10);
 
-    try std.testing.expectEqual(16, set_queue.capacity);
-    try std.testing.expectEqual(15, set_queue.available_slots);
+    try std.testing.expectEqual(10, set_queue.capacity);
+    try std.testing.expectEqual(9, set_queue.available_slots);
 
     try std.testing.expectEqual(&test_callback, ret.func);
     try std.testing.expectEqual(@intFromPtr(&executed), @intFromPtr(ret.data.user_data));
@@ -466,12 +464,12 @@ test "Add new callback to queue and immediately execute" {
 
     try std.testing.expectEqual(1, callbacks_set.callbacks_num);
     try std.testing.expectEqual(ret, &callbacks_set.callbacks[0]);
-    try std.testing.expectEqual(16, callbacks_set.callbacks.len);
+    try std.testing.expectEqual(10, callbacks_set.callbacks.len);
 
     const callbacks_executed  = try execute_callbacks(&set_queue, null, null, null, null);
     try std.testing.expectEqual(1, callbacks_executed);
-    try std.testing.expectEqual(16, set_queue.capacity);
-    try std.testing.expectEqual(16, set_queue.available_slots);
+    try std.testing.expectEqual(10, set_queue.capacity);
+    try std.testing.expectEqual(10, set_queue.available_slots);
 
     try std.testing.expectEqual(1, executed);
     try std.testing.expectEqual(0, callbacks_set.callbacks_num);
