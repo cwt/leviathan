@@ -28,5 +28,27 @@ pub fn z_datagram_get_extra_info(self: *DatagramTransport.DatagramTransportObjec
         defer python_c.py_decref(args);
         return python_c.PyObject_CallObject(fromfd, args);
     }
+
+    if (std.mem.eql(u8, name, "sockname")) {
+        if (self.fd < 0) return python_c.get_py_none();
+        var storage: std.posix.sockaddr.storage = undefined;
+        var addrlen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);
+        std.posix.getsockname(self.fd, @ptrCast(&storage), &addrlen) catch {
+            return python_c.get_py_none();
+        };
+        const address = switch (storage.family) {
+            std.posix.AF.INET => blk: {
+                const sa: *align(1) const std.posix.sockaddr.in = @ptrCast(&storage);
+                break :blk std.net.Address.initIp4(@as([4]u8, @bitCast(sa.addr)), std.mem.bigToNative(u16, sa.port));
+            },
+            std.posix.AF.INET6 => blk: {
+                const sa: *align(1) const std.posix.sockaddr.in6 = @ptrCast(&storage);
+                break :blk std.net.Address.initIp6(sa.addr, std.mem.bigToNative(u16, sa.port), sa.flowinfo, sa.scope_id);
+            },
+            else => return python_c.get_py_none(),
+        };
+        return utils.Address.to_py_addr(address);
+    }
+
     return python_c.get_py_none();
 }

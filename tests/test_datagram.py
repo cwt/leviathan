@@ -19,6 +19,32 @@ class DatagramProtocol(asyncio.DatagramProtocol):
     def connection_lost(self, exc):
         self.on_con_lost.set_result(exc)
 
+
+class EchoServerProtocol(asyncio.DatagramProtocol):
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        self.transport.sendto(data, addr)
+
+
+class EchoClientProtocol(asyncio.DatagramProtocol):
+    def __init__(self, on_done, n):
+        self.on_done = on_done
+        self.n = n
+        self.received = 0
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        self.received += 1
+        if self.received >= self.n:
+            self.on_done.set_result(True)
+
+    def error_received(self, exc):
+        self.on_done.set_exception(exc)
+
 @pytest.mark.asyncio
 async def test_create_datagram_endpoint_ipv4():
     loop = asyncio.get_running_loop()
@@ -100,3 +126,60 @@ async def test_create_datagram_endpoint_remote():
     finally:
         t1.close()
         t2.close()
+
+
+@pytest.mark.asyncio
+async def test_datagram_echo():
+    loop = asyncio.get_running_loop()
+
+    t1, p1 = await loop.create_datagram_endpoint(
+        EchoServerProtocol, local_addr=('127.0.0.1', 0)
+    )
+    addr = t1.get_extra_info('sockname')
+
+    on_done = loop.create_future()
+    t2, p2 = await loop.create_datagram_endpoint(
+        lambda: EchoClientProtocol(on_done, 3), local_addr=('127.0.0.1', 0)
+    )
+
+    t2.sendto(b'hello', addr)
+    t2.sendto(b'world', addr)
+    t2.sendto(b'!', addr)
+
+    await asyncio.wait_for(on_done, timeout=5)
+    assert p2.received == 3
+
+    t1.close()
+    t2.close()
+
+
+@pytest.mark.asyncio
+async def test_datagram_get_extra_info_sockname():
+    loop = asyncio.get_running_loop()
+    t, p = await loop.create_datagram_endpoint(
+        DatagramProtocol, local_addr=('127.0.0.1', 0)
+    )
+    try:
+        sockname = t.get_extra_info('sockname')
+        assert sockname is not None
+        assert len(sockname) == 2
+        assert isinstance(sockname[0], str)
+        assert isinstance(sockname[1], int)
+        assert sockname[1] > 0
+    finally:
+        t.close()
+
+
+@pytest.mark.asyncio
+async def test_datagram_get_extra_info_socket():
+    loop = asyncio.get_running_loop()
+    t, p = await loop.create_datagram_endpoint(
+        DatagramProtocol, local_addr=('127.0.0.1', 0)
+    )
+    try:
+        sock = t.get_extra_info('socket')
+        assert sock is not None
+        assert sock.family == socket.AF_INET
+        assert sock.type == socket.SOCK_DGRAM
+    finally:
+        t.close()

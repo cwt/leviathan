@@ -274,15 +274,29 @@ AssertionError
 
 **Reproduce:** Run `benchmark.py` which spawns isolated subprocess per loop/benchmark. Leviathan `-c` mode also segfaults on TCP echo.
 
-### 7.13 — UDP `create_datagram_endpoint` Hangs — 🔴 CRITICAL
+### 7.13 — UDP `create_datagram_endpoint` Hangs — 🔴 CRITICAL — ✅ FIXED
 
 **Context:** Discovered during `benchmark.py` UDP Ping-Pong benchmark with leviathan.
 
 **Error:** `loop.create_datagram_endpoint()` with a protocol that sends and receives datagrams hangs indefinitely. No timeout fires — the process blocks forever in `run_until_complete`.
 
-**Analysis:** Leviathan's UDP datagram endpoint fails to process incoming datagrams after the initial send. The `datagram_received` callback is never invoked, and future never resolves. Direct test (`loop.create_datagram_endpoint(Protocol, local_addr=(...))` + `transport.sendto()` on a connected socket) works for the initial send but the response never arrives at the protocol. Likely a missing io_uring recv submission for UDP sockets, or the recv completion event is not dispatched to the protocol.
+**Root Cause (two bugs):**
 
-**Note:** `get_extra_info("sockname")` also returns `None` for UDP transports — only `get_extra_info("socket")` works.
+1. **`sendto` ignored the `addr` argument:** `z_datagram_sendto` in `src/transports/datagram/write.zig` only used `args[0]` (the data) and ignored `args[1]` (the destination address). For unconnected sockets (e.g. an echo server), `sendto(data, addr)` was silently converted to `writev(data)` with no destination — the kernel returned `EDESTADDRREQ` but `error_received` is a no-op in the base protocol. The server's echo response was never actually sent.
+
+2. **`get_extra_info("sockname")` returned `None`:** `src/transports/datagram/extra_info.zig` only handled `"socket"`. No `"sockname"` handler existed, so `transport.get_extra_info("sockname")` returned `None`, making it impossible to discover the dynamically-assigned port.
+
+**Fix:**
+1. `src/transports/datagram/write.zig`:
+   - When `addr` argument is provided (not None), parse it via `utils.Address.from_py_addr`, allocate a `SendToData` struct on the heap, build a `msghdr` with the destination address, and queue a `PerformSendMsg` instead of `PerformWriteV`.
+   - The completion callback `sendto_completed` handles buffer accounting (decrement `buffer_size`, call `resume_writing` if needed) and frees the heap-allocated struct and copied buffer.
+   - Extracted shared `buffer_watermark_check` function to eliminate duplication.
+   - Added `or self.closed` guard to `write_completed` to prevent post-close callback execution.
+
+2. `src/transports/datagram/extra_info.zig`:
+   - Added `"sockname"` handler that calls `getsockname()` on the fd and returns a Python `(host, port)` tuple via `utils.Address.to_py_addr`.
+
+**Tests:** `test_datagram_echo` (full round-trip with unconnected echo server), `test_datagram_get_extra_info_sockname`, `test_datagram_get_extra_info_socket`. All 261 tests pass.
 
 ### 7.14 — `create_subprocess_exec` Crashes — 🟠 HIGH
 
