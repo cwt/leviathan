@@ -815,13 +815,20 @@ class PseudoSocket:
         return self._proto
 
     def getsockname(self):
-        # This will be overridden or implemented by calling loop methods
         import socket
-        return socket.fromfd(self._fd, self._family, self._type).getsockname()
+        tmp = socket.fromfd(self._fd, self._family, self._type)
+        try:
+            return tmp.getsockname()
+        finally:
+            tmp.close()
 
     def getpeername(self):
         import socket
-        return socket.fromfd(self._fd, self._family, self._type).getpeername()
+        tmp = socket.fromfd(self._fd, self._family, self._type)
+        try:
+            return tmp.getpeername()
+        finally:
+            tmp.close()
 
     def setblocking(self, blocking):
         pass
