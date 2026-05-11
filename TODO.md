@@ -329,6 +329,165 @@ This also resolved the 7.11 `resume_writing` assertion failure.
 
 ---
 
+## 🔴 PRIORITY 8: Performance — Bottleneck Analysis & Improvement Plan (2026-05-11)
+
+Benchmark results (rev 416) reveal leviathan is **2-12× slower** than standard `asyncio` despite using `io_uring`. Analysis identified three systemic root causes.
+
+### Benchmark Summary (rev 416, python3.14)
+
+| Benchmark | vs asyncio | Category | 
+|-----------|-----------|----------|
+| Event fiesta factory | 0.42× | Task-intensive |
+| Producer-consumer | 0.42× | Task-intensive |
+| Food delivery | 0.53× | Task-intensive |
+| Async task workflow | 0.46× | Task-intensive |
+| Task spawn | 0.43× | Task-intensive |
+| TCP Echo | 0.57× | I/O |
+| Unix Echo | 0.72× | I/O |
+| UDP Ping-Pong | 0.80× | I/O |
+| Chat | 0.73× | Mixed (sleep-dominated) |
+| **Subprocess** | **0.08×** | **Fork/exec (11× slower)** |
+| **Socket Ops** | **TIMEOUT** | **512× connect overhead > 30s** |
+
+Pattern: Task scheduling overhead dominates (~0.42×), I/O shows moderate penalty (0.57–0.80×), subprocess is catastrophically slow, and high-connection-count benchmarks time out.
+
+---
+
+### Root Cause A: Mutex Held Across Allocation (`src/loop/scheduling/soon.zig:14–20`)
+
+```
+dispatch():
+  mutex.lock()
+    dispatch_nonthreadsafe()
+      ready_queue.append()
+        ensure_capacity(reserved_slots)  ← can malloc() under mutex
+      wakeup_eventfd()                   ← syscall under mutex
+  mutex.unlock()
+```
+
+And in the runner (`src/loop/runner.zig:220–266`), the mutex is held for **80% of each loop iteration** — covering queue swap, hook execution, and capacity checks. Any background thread calling `call_soon_threadsafe` is serialised behind this lock. The `reserved_slots` parameter passed as `min_capacity` to `ensure_capacity` forces capacity rechecks on every single `call_soon`, even when the queue already has space.
+
+**Files:** `src/loop/scheduling/soon.zig`, `src/loop/runner.zig`
+
+---
+
+### Root Cause B: `reserved_slots` Inflates Queue Capacity Without Bound (`soon.zig:11`, `runner.zig:255–271`)
+
+Three compounding effects:
+
+1. **Every `call_soon` passes all reserved_slots as min_capacity** (`soon.zig:11`):
+   ```zig
+   _ = try ready_queue.append(callback, @max(1, self.reserved_slots));
+   ```
+   When 10,000 IO ops are in-flight, every call_soon requests 10,000 capacity slots.
+
+2. **Every loop iteration grows BOTH double-buffer queues** (`runner.zig:255–258`):
+   ```zig
+   for (ready_tasks_queues) |*queue| {
+       try queue.ensure_capacity(reserved_slots);
+   }
+   ```
+   The inactive queue already has capacity from last swap — this is pure waste.
+
+3. **Prune threshold inflated — queue never shrinks** (`runner.zig:269–271`):
+   ```zig
+   try call_once(ready_tasks_queue,
+       @max(self.reserved_slots, ready_tasks_queue_max_capacity), loop_obj);
+   ```
+   When `reserved_slots` is high, the prune target is higher than actual usage, so the queue **never reclaims memory**. Memory grows monotonically under sustained load.
+
+**Files:** `src/loop/scheduling/soon.zig:11`, `src/loop/runner.zig:255–271`, `src/callback_manager.zig:141–146`
+
+---
+
+### Root Cause C: Synchronous `subprocess.Popen` Blocks the Event Loop (`leviathan/loop.py:760`)
+
+```python
+popen = subprocess.Popen(cmd, ...)  # fork() + exec() — synchronous, blocks loop
+```
+
+`fork()` is O(process RSS). On a Python process with 500MB, this takes 10–50ms. Every subprocess call blocks the entire event loop — no IO, no callbacks, nothing. The `_TransportWrapper` Python class adds further overhead:
+- Two closures allocated per `subprocess_exec` call (`leviathan/loop.py:825,833`)
+- `_TransportWrapper` instance allocated twice per call (once at line 853, replaced by line 825)
+- `_exit_future` stored redundantly on wrapper instance (`loop.py:776,818`)
+
+**Files:** `leviathan/loop.py:760–765, 772–853`
+
+---
+
+### Root Cause D: Per-Resource Capacity Reservation (`src/loop/main.zig:143–146`)
+
+```zig
+pub inline fn reserve_slots(self: *Loop, amount: usize) !void {
+    const new_value = self.reserved_slots + amount;
+    try self.ready_tasks_queues[self.ready_tasks_queue_index].ensure_capacity(new_value);
+    self.reserved_slots = new_value;
+}
+```
+
+Called on every blocking task submission (read, write, timer, connect, accept, DNS resolve). During a connection burst, hundreds of `reserve_slots(1)` calls trigger repeated capacity growth checks, each potentially doubling the allocation.
+
+**File:** `src/loop/main.zig:143–146`, `src/loop/scheduling/io/main.zig:213`
+
+---
+
+### Additional Bottlenecks (Medium Priority)
+
+| ID | File | Lines | Issue |
+|----|------|-------|-------|
+| E | `src/loop/runner.zig` | 199–203 | `ring.copy_cqes` syscall under mutex in non-waiting path |
+| F | `src/loop/runner.zig` | 269 | No GIL-yield budget in `call_once` — one slow callback starves Python threads |
+| G | `src/callback_manager.zig` | 297–352 | Sequential callback dispatch — head-of-line blocking |
+| H | `src/callback_manager.zig` | 122–123 | `while` loop for capacity doubling could be single `@max` |
+| I | `src/callback_manager.zig` | 259–271 | All pending callbacks executed synchronously during loop teardown |
+| J | `src/callback_manager.zig` | 301–306, 346–349 | Debug-mode incref/decref per callback adds atomic refcount overhead |
+| K | `src/loop/python/io/subprocess/exec.zig` | 53–59 | `PyTuple_Pack` heap allocation per subprocess_exec |
+
+---
+
+### Socket Ops TIMEOUT — Root Cause Chain
+
+The `socket_ops` benchmark does 512 sequential `connect → write → read → close` cycles (×3 iterations). Each cycle triggers ~5 callbacks through the event loop. That's ~7680 callbacks total. With per-callback overhead amplified by:
+
+1. Mutex contention (Root Cause A)
+2. Queue capacity inflation (Root Cause B) — every callback appends with `reserved_slots` as min_capacity, causing repeated `increase_capacity()` calls
+3. No queue pruning (Root Cause B #3) — queue grows but never shrinks
+
+The cumulative overhead pushes 7680 dispatch cycles past 30s, causing the benchmark timeout.
+
+---
+
+### Improvement Plan
+
+#### Phase 1: Quick Wins (Low Risk, High Impact) — Estimate 1–2 hours
+
+| # | Fix | File(s) | Expected Gain | Difficulty |
+|---|-----|---------|---------------|------------|
+| 8.1 | Remove `reserved_slots` from `dispatch_nonthreadsafe` capacity — pass `1` instead of `@max(1, self.reserved_slots)` | `soon.zig:11` | 30–50% task-intensive | 1 line |
+| 8.2 | Only `ensure_capacity` the active queue in runner, not both | `runner.zig:255–258` | 15–20% loop overhead | 2 lines |
+| 8.3 | Run `subprocess.Popen` in thread pool executor to avoid blocking loop | `loop.py:760–765` | 10× subprocess | ~10 lines |
+| 8.4 | Decouple prune threshold from `reserved_slots` — use `ready_tasks_queue_max_capacity` only | `runner.zig:269–271` | Prevents OOM under load | 1 line |
+| 8.5 | Use `@max(extra_capacity, min_capacity)` instead of `while` loop | `callback_manager.zig:122–123` | Minor | 1 line |
+| 8.6 | Move `wakeup_eventfd` outside mutex in `dispatch` — check `ring_blocked` before acquiring lock | `soon.zig:14–20` | 5–10% threaded dispatch | Refactor |
+
+#### Phase 2: Structural Fixes (Medium Risk) — Estimate 1–2 days
+
+| # | Fix | Expected Gain | Difficulty |
+|---|-----|---------------|------------|
+| 8.7 | Shrink mutex critical section in runner — only hold mutex for queue swap, not hook execution | 20–40% overall | Architectural |
+| 8.8 | Switch to lock-free SPSC queue for `call_soon_threadsafe` → drain under mutex | Eliminates threaded dispatch bottleneck | New data structure |
+| 8.9 | Batch capacity reservations — `reserve_slots` only grows when threshold exceeded, not per-call | Prevents repeated growth checks | ~20 lines |
+
+#### Phase 3: Advanced (High Risk) — Estimate 1 week+
+
+| # | Fix | Expected Gain | Difficulty |
+|---|-----|---------------|------------|
+| 8.10 | Separate lock for io_uring operations vs ready queue — allow concurrent IO submission and callback dispatch | Enables io_uring-native throughput | Major refactor |
+| 8.11 | Budget-based GIL yield in `call_once` — after N callbacks or T µs, release/reacquire GIL | Better free-threading fairness | ~30 lines |
+| 8.12 | Dedicated thread pool for `subprocess.Popen` via `posix_spawn` to avoid `fork()` entirely | 20× subprocess (avoids COW page fault storm) | Python 3.8+ API |
+
+---
+
 ## ✅ Completed Next Steps
 
 1.  **`create_server` DNS** — ✅ Already implemented with async state machine (same callback pattern as `create_connection`). Added `host=None` support (binds to all interfaces: IPv4 + IPv6).
