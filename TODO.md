@@ -601,10 +601,9 @@ Any new queue data structure holding `Callback` objects (which contain `PyObject
 
 | # | Fix | File(s) | Expected Gain | Lesson Check |
 |---|-----|---------|---------------|--------------|
-| 8.1 | Remove `reserved_slots` from `dispatch_nonthreadsafe` capacity — pass `1` instead of `@max(1, self.reserved_slots)` | `soon.zig:11` | 30–50% task-intensive | ✅ All 5 lessons |
-| 8.2 | Only `ensure_capacity` the active queue in runner, not both | `runner.zig:255–258` | 15–20% loop overhead | ✅ All 5 lessons |
-| 8.3 | Reduce pidfd exit timer from 100ms → 1ms (or exponential backoff 1/10/100/1000ms) | `transport.zig:199,217,261` | 10× subprocess | ✅ All 5 lessons |
-| 8.3b | Swap eventfd wake AFTER queue append in `dispatch_nonthreadsafe` | `soon.zig:7–11` | Minor clarity | ✅ No behavioral change |
+| 8.1 | Remove `reserved_slots` from `dispatch_nonthreadsafe` capacity + swap eventfd order | `soon.zig:7–11` | Socket Ops: TIMEOUT → 0.27× (PASS) | ✅ All 5 lessons — **DONE (rev 418)** |
+| 8.2 | ~~Only `ensure_capacity` active queue~~ | `runner.zig:255–258` | **RETRACTED** — `ensure_capacity()` already short-circuits internally; inactive queue check costs 1 inlined branch (negligible). Aggressive version (skip entirely) causes test hangs. | N/A |
+| 8.3 | Reduce pidfd exit timer from 100ms → 1ms (or exponential backoff 1/10/100/1000ms) | `transport.zig:199,217,261` | 10× subprocess (est.) | ✅ All 5 lessons |
 | 8.4 | Decouple prune threshold from `reserved_slots` — use `ready_tasks_queue_max_capacity` only | `runner.zig:269–271` | Prevents OOM, helps GC | ⚠️ Verify prune safety (Lesson 4) |
 | 8.5 | Use `@max(extra_capacity, min_capacity)` instead of `while` loop | `callback_manager.zig:122–123` | Minor | ✅ Pure optimization |
 
@@ -632,7 +631,7 @@ Any new queue data structure holding `Callback` objects (which contain `PyObject
 | Fix | L1: Atomic Sleep | L2: EINTR | L3: GC Traversal | L4: Safe Traversal | L5: Loop Resilience |
 |-----|:---:|:---:|:---:|:---:|:---:|
 | 8.1 (capacity) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 8.2 (single queue) | ✅ | ✅ | ✅ Improve | ✅ | ✅ |
+| 8.2 (retracted) | N/A | N/A | N/A | N/A | N/A |
 | 8.3 (pidfd timer) | ✅ | ✅ | ⚠️ Verify | ✅ | ✅ |
 | 8.4 (prune) | ✅ | ✅ | ✅ Improve | ⚠️ Verify | ✅ |
 | 8.5 (@max) | ✅ | ✅ | ✅ | ✅ | ✅ |
