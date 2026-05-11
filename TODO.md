@@ -652,6 +652,77 @@ Any new queue data structure holding `Callback` objects (which contain `PyObject
 
 ---
 
+## 🔴 PRIORITY 9: Callback Dispatch Rewrite — Flat Ring Buffer (2026-05-11)
+
+### Root Cause of 0.42× Task Performance
+
+After 7 performance optimizations (Priority 8), leviathan remains **2-2.5× slower** than `asyncio` on task-intensive workloads. All incremental fixes hit the same wall: the `CallbacksSetsQueue` linked-list dispatch layer.
+
+```
+uvloop/libuv:  array[index++] = callback_ptr     // O(1), 1 store
+leviathan:     walk(node) → find_slot() → copy(80-byte Callback)
+               // O(n) walk, memcpy per append
+```
+
+Per `call_soon` / `create_task`, the overhead is dominated by `try_append()` walking a linked list to find a free slot. This is fundamentally non-scalable and cannot be fixed with incremental changes.
+
+### Design: Flat Ring Buffer Replacements
+
+Replace the current `CallbacksSetsQueue` + `CallbacksSet` linked-list with two fixed-size ring buffers:
+
+| Component | Current | New | Gain |
+|-----------|---------|-----|------|
+| Callback storage | Linked-list `CallbacksSet` nodes | `[N]Callback` fixed array | Eliminates node allocation + walking |
+| Append | `try_append()` walk + copy | `buf[write_idx++] = *callback` | **O(1) pointer write** |
+| Execute | `execute_callbacks()` offset tracking | `while read_idx < write_idx: buf[read_idx++]` | **O(1) read, no offset tracking** |
+| Prune | `prune()` node deallocation | Reset `read_idx = write_idx = 0` | **O(1) ring reset** |
+| Double-buffer | Two `CallbacksSetsQueue` | Two ring buffers, swap indices | Same pattern, simpler |
+
+### Constraints from Lessons Learned
+
+1. **Lesson 1 (Atomic Sleep):** Ring buffer swap must remain atomic under mutex.
+2. **Lesson 3 (GC Traversal):** Ring buffer must implement `tp_traverse` — iterate `read_idx..write_idx`, visiting each callback's `PyObject` fields. Already have `executed` flag; add it to ring entries.
+3. **Lesson 4 (Safe Traversal):** Before GIL yield (8.9), advance `read_idx` past consumed entries. GC won't see stale refs.
+4. **Mandate 3 (Thread-Safe Dispatches):** Ring buffer write must be mutex-protected (same as current `dispatch`). Ring buffer read (in `call_once`) runs without mutex (same as current).
+
+### Implementation Plan
+
+#### Phase 1: Single Ring Buffer (Non-thread-safe)
+
+| # | Task | Files | Risk |
+|---|------|-------|------|
+| 9.1 | Define `RingBuffer(N)` struct with `[N]Callback` array, `read_idx`, `write_idx`, `executed` bitset | New file or `callback_manager.zig` | Low |
+| 9.2 | Replace `append()` with O(1) ring push | `callback_manager.zig` | Low |
+| 9.3 | Replace `execute_callbacks()` loop with ring drain | `callback_manager.zig` | Low |
+| 9.4 | Replace `prune()` with ring reset | `callback_manager.zig` | Low |
+| 9.5 | Add `tp_traverse` for ring buffer | `callback_manager.zig` | Medium — needs visitation of active window |
+| 9.6 | Wire up `call_once`, `dispatch_nonthreadsafe`, double-buffer swap | `runner.zig`, `soon.zig` | Medium |
+| 9.7 | Update zig unit tests | `callback_manager.zig` | Low |
+| 9.8 | Run full test suite + benchmarks | All | — |
+
+**Expected impact:** Task-intensive benchmarks 0.42× → **0.8-1.5×** asyncio.
+
+#### Phase 2: io_uring Batching (Requires Phase 1)
+
+Once the dispatch layer is O(1), the next bottleneck is io_uring submission/reaping overhead:
+
+| # | Task | Gain |
+|---|------|------|
+| 9.9 | Batch SQE submission — collect pending ops, submit all in one `io_uring_enter` | 2-5× I/O throughput |
+| 9.10 | Batch CQE reaping — process all CQEs per `copy_cqes` without re-entering loop | Additional 1.5-2× I/O |
+| 9.11 | Registered buffers / fixed files for hot paths | Marginal — zero-copy for known fds |
+
+**Expected impact with both phases:** leviathan at **2-5×** asyncio, matching or beating uvloop.
+
+### Risk Assessment
+
+- **Backward compatibility:** Ring buffer replaces `CallbacksSetsQueue` entirely. ~10 test files, ~5 Zig modules affected.
+- **GC safety:** Highest risk area. Must verify `tp_traverse` visits exactly `read_idx..write_idx` window, not full array.
+- **Capacity overflow:** Ring buffer is fixed-size. Must handle "full" case gracefully (fall back to expanding array or reject). Current code already has `error.Overflow` path.
+- **Free-threading:** Ring buffer indices must be atomically updated when GC may read them concurrently. Use `std.atomic` or ensure GC only runs during GIL-held sections.
+
+---
+
 ## ✅ Completed Next Steps
 
 1.  **`create_server` DNS** — ✅ Already implemented with async state machine (same callback pattern as `create_connection`). Added `host=None` support (binds to all interfaces: IPv4 + IPv6).
