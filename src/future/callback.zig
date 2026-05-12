@@ -161,19 +161,13 @@ pub fn traverse_callbacks_queue(queue: *const CallbacksSetData, visit: python_c.
                 const vret2 = visit.?(@ptrCast(data.context), arg);
                 if (vret2 != 0) return vret2;
             },
-            .ZigGeneric => |_| {
-                // For Tasks, data.ptr is the Task object.
-                // We don't know for sure, but we can check if it looks like a PyObject.
-                // Actually, in Leviathan, it's always a Task for ZigGeneric callbacks here.
-                // But safer to check if we can.
-                
-                // Wait! wakeup_task user_data is always the Task.
-                // Let's assume it's a PyObject for now or skip it if unsure.
-                // If I skip it, the cycle Loop -> Task is still broken because Loop sees Task.
-                // But what about Future -> Task?
-                // AwaitedFuture -> Task.
-                // If Task holds AwaitedFuture, we have Task -> AwaitedFuture -> Task.
-                // This cycle is HIDDEN if Future doesn't traverse its callbacks.
+            .ZigGeneric => |data| {
+                // data.ptr is always a PythonTaskObject (Task) in Leviathan.
+                // Traverse it so GC can see Task -> Future -> Task cycles.
+                if (data.ptr) |ptr| {
+                    const vret = visit.?(@alignCast(@ptrCast(ptr)), arg);
+                    if (vret != 0) return vret;
+                }
             }
         }
     }
