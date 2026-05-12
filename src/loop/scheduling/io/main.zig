@@ -14,7 +14,7 @@ pub const Cancel = @import("cancel.zig");
 pub const Socket = @import("socket.zig");
 
 pub const TotalTasksItems = switch (builtin.mode) {
-    .Debug => 1024,
+    .Debug => 8192,
     .ReleaseSmall => 1024,
     else => 8192
 };

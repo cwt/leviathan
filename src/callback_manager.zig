@@ -142,7 +142,7 @@ pub fn RingBuffer(comptime N: usize) type {
     };
 }
 
-pub const ReadyTasksQueueCapacity = 262144;
+pub const ReadyTasksQueueCapacity = 1048576;
 
 pub fn execute_ring_buffer(
     comptime N: usize,
