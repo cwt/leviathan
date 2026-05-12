@@ -520,6 +520,20 @@ fn _execute_task_send(task: *Task.PythonTaskObject) !void {
 
 pub fn execute_task_send(data: *const CallbackManager.CallbackData) !void {
     const task: *Task.PythonTaskObject = @alignCast(@ptrCast(data.user_data.?));
+    if (data.cancelled) {
+        // The loop is shutting down (release_ring_buffer). Start the
+        // coroutine via PyIter_Send just to set gi_frame != NULL, which
+        // prevents CPython's "coroutine was never awaited" RuntimeWarning
+        // when the Task is eventually garbage collected.
+        if (task.coro) |coro| {
+            var coro_ret: ?PyObject = null;
+            defer python_c.py_xdecref(coro_ret);
+            _ = python_c.PyIter_Send(coro, python_c.get_py_none_without_incref(), &coro_ret);
+            python_c.PyErr_Clear();
+        }
+        python_c.py_decref(@ptrCast(task));
+        return;
+    }
     @call(.always_inline, _execute_task_send, .{task}) catch |err| {
         utils.handle_zig_function_error(err, {});
 
