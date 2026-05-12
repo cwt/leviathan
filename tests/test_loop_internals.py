@@ -613,6 +613,32 @@ def test_run_until_complete_keyboard_interrupt() -> None:
         loop.close()
 
 
+def test_loop_close_handles_cancelled_throw() -> None:
+    """loop.close() handles execute_task_throw with cancelled=true.
+
+    When a task has exception set and execute_task_throw is dispatched
+    to the ready queue, but the loop stops before it runs,
+    release_ring_buffer replays the callback with cancelled=true.
+    The handler must set the future's exception from the task's stored
+    exception without trying to throw into the coroutine on a
+    torn-down loop.
+    """
+    loop = Loop()
+    try:
+        async def await_future():
+            await loop.create_future()
+
+        task = loop.create_task(await_future())
+        task.cancel()
+        loop.call_later(0.0, loop.stop)
+        try:
+            loop.run_until_complete(task)
+        except (RuntimeError, asyncio.CancelledError):
+            pass
+    finally:
+        loop.close()
+
+
 def test_do_shutdown_exception() -> None:
     loop = Loop()
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test")

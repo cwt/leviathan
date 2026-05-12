@@ -436,6 +436,19 @@ fn _execute_task_throw(task: *Task.PythonTaskObject, task_exception: ?PyObject) 
 
 pub fn execute_task_throw(data: *const CallbackManager.CallbackData) !void {
     const task: *Task.PythonTaskObject = @alignCast(@ptrCast(data.user_data.?));
+    if (data.cancelled) {
+        // Loop is shutting down. Set the future's exception directly from
+        // the task's stored exception without trying to throw into the
+        // coroutine (the loop infrastructure may already be deinitialized).
+        const exception = task.exception orelse {
+            python_c.py_decref(@ptrCast(task));
+            return;
+        };
+        const fut = utils.get_data_ptr(Future, &task.fut);
+        try Future.Python.Result.future_fast_set_exception(&task.fut, fut, exception);
+        python_c.py_decref(@ptrCast(task));
+        return;
+    }
     @call(.always_inline, _execute_task_throw, .{task, task.exception.?}) catch |err| {
         utils.handle_zig_function_error(err, {});
 
