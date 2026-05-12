@@ -64,8 +64,7 @@ run_tests() {
         cmd="$py"
     fi
     if PYTHONPATH=. $cmd -m pytest tests/ \
-        -q \
-        --cov=leviathan --cov-report=term --cov-report=html --cov-config=.coveragerc; then
+        -q; then
         printf "${GREEN}[%s] PASS${NC}\n" "$label"
         PASS=$((PASS + 1))
         return 0

@@ -85,6 +85,8 @@ pub extern var PyExc_StopIteration: ?*PyObject;
 pub extern var PyExc_KeyboardInterrupt: ?*PyObject;
 pub extern var PyExc_SystemExit: ?*PyObject;
 pub extern var PyExc_NotImplementedError: ?*PyObject;
+pub extern var PyExc_SyntaxError: ?*PyObject;
+pub extern var PyExc_RuntimeWarning: ?*PyObject;
 pub extern var PyExc_BaseExceptionGroup: ?*PyObject;
 pub extern var PyExc_ResourceWarning: ?*PyObject;
 

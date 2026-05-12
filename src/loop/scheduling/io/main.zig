@@ -14,7 +14,7 @@ pub const Cancel = @import("cancel.zig");
 pub const Socket = @import("socket.zig");
 
 pub const TotalTasksItems = switch (builtin.mode) {
-    .Debug => 4,
+    .Debug => 1024,
     .ReleaseSmall => 1024,
     else => 8192
 };
@@ -72,22 +72,18 @@ pub const BlockingTask = struct {
                     .TIME => {},
                     .CANCELED => {},
                     .SUCCESS => {},
-                    else => {
-                        // Log but don't panic. Panicking calls abort() and kills the process.
-                    }
+                    else => {}
                 }
             },
             .Cancel => {},
             .PerformWriteV, .PerformWrite, .PerformSendMsg => {
                 switch (result) {
                     .SUCCESS => {},
-                    .CANCELED, .BADF, .FBIG, .INTR, .IO, .NOSPC, .INVAL, .CONNRESET,  // Expected errors
+                    .CANCELED, .BADF, .FBIG, .INTR, .IO, .NOSPC, .INVAL, .CONNRESET,
                     .PIPE, .NOBUFS, .NXIO, .ACCES, .NETDOWN, .NETUNREACH,
                     .SPIPE => {},
                     .AGAIN => {},
-                    else => {
-                        // Log but don't panic. Panicking calls abort() and kills the process.
-                    }
+                    else => {}
                 }
             },
             .PerformRead, .PerformRecvMsg => {
@@ -97,9 +93,7 @@ pub const BlockingTask = struct {
                     .OVERFLOW, .SPIPE, .CONNRESET, .NOTCONN, .TIMEDOUT,
                     .NOBUFS, .NOMEM, .NXIO => {},
                     .AGAIN => {},
-                    else => {
-                        // Log but don't panic. Panicking calls abort() and kills the process.
-                    }
+                    else => {}
                 }
             },
             .SocketShutdown => {
@@ -107,9 +101,7 @@ pub const BlockingTask = struct {
                     .SUCCESS => {},
                     .CANCELED, .INVAL, .NOTCONN, .NOTSOCK, .BADF, .NOBUFS => {},
                     .AGAIN => {},
-                    else => {
-                        // Log but don't panic. Panicking calls abort() and kills the process.
-                    }
+                    else => {}
                 }
             },
             .SocketConnect, .SocketAccept => {
@@ -119,18 +111,14 @@ pub const BlockingTask = struct {
                     .BADF, .CONNREFUSED, .FAULT, .INPROGRESS, .INTR, .ISCONN,
                     .NETUNREACH, .NOTSOCK, .PROTOTYPE, .TIMEDOUT => {},
                     .AGAIN => {},
-                    else => {
-                        // Log but don't panic. Panicking calls abort() and kills the process.
-                    }
+                    else => {}
                 }
             },
             else => {
                 switch (result) {
                     .SUCCESS => {},
                     .CANCELED, .BADF, .INTR => {},
-                    else => {
-                        // Log but don't panic. Panicking calls abort() and kills the process.
-                    }
+                    else => {}
                 }
             }
         }
@@ -208,20 +196,18 @@ pub const BlockingTasksSet = struct {
         operation: BlockingOperation,
         callback: ?*const CallbackManager.Callback
     ) !*BlockingTask {
-        if (self.index == TotalTasksItems) return error.Overflow;
+        const index = self.index;
+        if (index == TotalTasksItems) return error.Overflow;
 
         try self.loop.reserve_slots(1);
 
-        const index = self.index;
-        self.index = index + 1;
-
         const data_slot = &self.task_data_pool[index];
-        if (callback) |v| {
-            data_slot.data = .{
-                .callback = v.*
-            };
-        }
+        
+        // GC Safety: Initialize data BEFORE incrementing index
+        data_slot.data = if (callback) |v| .{ .callback = v.* } else .none;
         data_slot.operation = operation;
+        
+        @atomicStore(u16, &self.index, index + 1, .release);
 
         return data_slot;
     }
@@ -256,7 +242,8 @@ pub const BlockingTasksSet = struct {
     }
 
     pub fn traverse(self: *const BlockingTasksSet, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
-        for (self.task_data_pool[0..self.index]) |*task| {
+        const current_index = @atomicLoad(u16, &self.index, .acquire);
+        for (self.task_data_pool[0..current_index]) |*task| {
             switch (task.data) {
                 .callback => |*cb| {
                     if (cb.data.traverse) |t| {
@@ -327,7 +314,6 @@ pub fn init(self: *IO, loop: *Loop, allocator: std.mem.Allocator) !void {
     self.ring = try std.os.linux.IoUring.init(TotalTasksItems, 0);
     errdefer self.ring.deinit();
 
-    // Mark io_uring fd CLOEXEC so child processes don't inherit it
     _ = std.posix.fcntl(self.ring.fd, std.posix.F.SETFD, @intCast(std.posix.FD_CLOEXEC)) catch {};
 
     self.eventfd = try std.posix.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
@@ -356,6 +342,8 @@ pub fn register_eventfd_callback(self: *IO) !void {
             }
         }
     });
+    // Critical: Submit the eventfd read SQE immediately so the kernel is watching
+    _ = try submit_guaranteed(&self.ring);
 }
 
 pub fn wakeup_eventfd(self: *IO) !void {
@@ -418,19 +406,19 @@ pub fn get_blocking_tasks_set(self: *IO) !*BlockingTasksSet {
 pub fn queue(self: *IO, event: BlockingOperationData) !usize {
     const set = try self.get_blocking_tasks_set();
 
-    return switch (event) {
-        .WaitReadable => |data| try Read.wait_ready(&self.ring, set, data),
-        .WaitWritable => |data| try Write.wait_ready(&self.ring, set, data),
-        .PerformRead => |data| try Read.perform(&self.ring, set, data),
-        .PerformWrite => |data| try Write.perform(&self.ring, set, data),
-        .PerformWriteV => |data| try Write.perform_with_iovecs(&self.ring, set, data),
-        .PerformRecvMsg => |data| try Read.recvmsg(&self.ring, set, data),
-        .PerformSendMsg => |data| try Write.sendmsg(&self.ring, set, data),
-        .WaitTimer => |data| try Timer.wait(&self.ring, set, data),
-        .SocketShutdown => |data| try Socket.shutdown(&self.ring, set, data),
-        .Cancel => |data| try Cancel.perform(&self.ring, data),
-        .SocketConnect => |data| try Socket.connect(&self.ring, set, data),
-        .SocketAccept => |data| try Socket.accept(&self.ring, set, data)
+    return try switch (event) {
+        .WaitReadable => |data| Read.wait_ready(&self.ring, set, data),
+        .WaitWritable => |data| Write.wait_ready(&self.ring, set, data),
+        .PerformRead => |data| Read.perform(&self.ring, set, data),
+        .PerformWrite => |data| Write.perform(&self.ring, set, data),
+        .PerformWriteV => |data| Write.perform_with_iovecs(&self.ring, set, data),
+        .PerformRecvMsg => |data| Read.recvmsg(&self.ring, set, data),
+        .PerformSendMsg => |data| Write.sendmsg(&self.ring, set, data),
+        .WaitTimer => |data| Timer.wait(&self.ring, set, data),
+        .SocketShutdown => |data| Socket.shutdown(&self.ring, set, data),
+        .Cancel => |data| Cancel.perform(&self.ring, data),
+        .SocketConnect => |data| Socket.connect(&self.ring, set, data),
+        .SocketAccept => |data| Socket.accept(&self.ring, set, data)
     };
 }
 

@@ -1,105 +1,87 @@
-const Loop = @import("main.zig");
-const CallbackManager = @import("callback_manager");
-
-const Lock = @import("../utils/lock.zig").Mutex;
-
-const utils = @import("utils");
-const python_c = @import("python_c");
-const PyObject = *python_c.PyObject;
-
 const std = @import("std");
 const builtin = @import("builtin");
 
-// ------------------------------------------------------------
-// https://github.com/ziglang/zig/issues/1499
-const PyThreadState = opaque {};
-extern fn PyEval_SaveThread() ?*PyThreadState;
-extern fn PyEval_RestoreThread(?*PyThreadState) void;
-// ------------------------------------------------------------
+const python_c = @import("python_c");
+const PyObject = *python_c.PyObject;
+const PyEval_SaveThread = python_c.PyEval_SaveThread;
+const PyEval_RestoreThread = python_c.PyEval_RestoreThread;
 
-fn exception_handler(
-    err: anyerror, loop_obj_ptr: ?*anyopaque,
-    context: ?CallbackManager.CallbackExceptionContext
-) !void {
-    const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(loop_obj_ptr.?));
-    const py_exception_handler = loop_obj.exception_handler.?;
+const utils = @import("utils");
+const lock = @import("../utils/lock.zig");
 
-    utils.handle_zig_function_error(err, {});
-    const exception = python_c.PyErr_GetRaisedException() orelse return error.PythonError;
+const CallbackManager = @import("callback_manager");
+const Loop = @import("main.zig");
+const Future = @import("../future/main.zig");
 
-    if (
-        python_c.PyErr_GivenExceptionMatches(exception, python_c.PyExc_SystemExit) > 0 or
-        python_c.PyErr_GivenExceptionMatches(exception, python_c.PyExc_KeyboardInterrupt) > 0
-    ) {
-        python_c.PyErr_SetRaisedException(exception);
-        return error.PythonError;
-    }
-    defer python_c.py_decref(exception);
+fn slow_callback_warning_handler(duration: f64, context: ?CallbackManager.CallbackExceptionContext, data: ?*anyopaque) void {
+    const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(data.?));
+    const loop_data = utils.get_data_ptr(Loop, loop_obj);
 
-    const context_dict = python_c.PyDict_New() orelse return error.PythonError;
+    const msg_allocated = if (context) |ctx|
+        std.fmt.allocPrint(loop_data.allocator, "Executing callback took {d:.6} seconds (context: {s})", .{ duration, ctx.exc_message }) catch null
+    else
+        std.fmt.allocPrint(loop_data.allocator, "Executing callback took {d:.6} seconds", .{ duration }) catch null;
+    
+    const msg = msg_allocated orelse "Executing callback took too long";
+    defer if (msg_allocated) |m| loop_data.allocator.free(m);
+
+    const context_dict = python_c.PyDict_New() orelse return;
     defer python_c.py_decref(context_dict);
 
-    if (python_c.PyDict_SetItemString(context_dict, "exception\x00", exception) < 0) return error.PythonError;
+    const py_msg = python_c.PyUnicode_FromStringAndSize(msg.ptr, @intCast(msg.len)) orelse return;
+    defer python_c.py_decref(py_msg);
+    _ = python_c.PyDict_SetItemString(context_dict, "message\x00", py_msg);
 
     if (context) |ctx| {
-        const msg = python_c.PyUnicode_FromString(ctx.exc_message) orelse return error.PythonError;
-        defer python_c.py_decref(msg);
-        if (python_c.PyDict_SetItemString(context_dict, "message\x00", msg) < 0) return error.PythonError;
-
-        if (python_c.PyDict_SetItemString(context_dict, ctx.module_name, ctx.module_ptr) < 0) return error.PythonError;
-
-        if (ctx.callback_ptr) |c_ptr| {
-            if (python_c.PyDict_SetItemString(context_dict, "callback\x00", c_ptr) < 0) return error.PythonError;
+        _ = python_c.PyDict_SetItemString(context_dict, "module\x00", ctx.module_ptr);
+        if (ctx.callback_ptr) |cp| {
+            _ = python_c.PyDict_SetItemString(context_dict, "callback\x00", cp);
         }
-    }else{
-        const msg = python_c.PyUnicode_FromString("Exception ocurred executing an event\x00")
-            orelse return error.PythonError;
-        defer python_c.py_decref(msg);
-        if (python_c.PyDict_SetItemString(context_dict, "message\x00", msg) < 0) return error.PythonError;
     }
 
-    const ret = python_c.PyObject_CallOneArg(py_exception_handler, context_dict)
-        orelse return error.PythonError;
+    const ret = python_c.PyObject_CallMethod(@ptrCast(loop_obj), "call_exception_handler\x00", "O\x00", context_dict) orelse {
+        if (python_c.PyErr_Occurred()) |exc| {
+            if (python_c.PyErr_GivenExceptionMatches(exc, python_c.PyExc_KeyboardInterrupt.?) != 0 or
+                python_c.PyErr_GivenExceptionMatches(exc, python_c.PyExc_SystemExit.?) != 0) {
+                return; // Can't return error from void function, but we shouldn't PyErr_Clear()
+            }
+        }
+        python_c.PyErr_Clear();
+        return;
+    };
     python_c.py_decref(ret);
 }
 
-fn slow_callback_warning_handler(
-    duration: f64, context: ?CallbackManager.CallbackExceptionContext,
-    loop_obj_ptr: ?*anyopaque
-) void {
-    const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(loop_obj_ptr.?));
+fn exception_handler(err: anyerror, data: ?*anyopaque, context: ?CallbackManager.CallbackExceptionContext) !void {
+    const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(data.?));
     
-    const context_dict = python_c.PyDict_New() orelse {
-        python_c.PyErr_Clear();
-        return;
-    };
+    const context_dict = python_c.PyDict_New() orelse return error.PythonError;
     defer python_c.py_decref(context_dict);
 
-    var msg_buf: [256]u8 = undefined;
-    const msg_str = std.fmt.bufPrint(&msg_buf, "Executing callback took {d:.6} seconds\x00", .{duration}) catch "Executing callback took too long\x00";
-    
-    const msg = python_c.PyUnicode_FromString(msg_str.ptr) orelse {
-        python_c.PyErr_Clear();
-        return;
-    };
-    defer python_c.py_decref(msg);
-    _ = python_c.PyDict_SetItemString(context_dict, "message\x00", msg);
+    const msg = if (context) |ctx| ctx.exc_message else "Exception in callback";
+    const py_msg = python_c.PyUnicode_FromString(msg.ptr) orelse return error.PythonError;
+    defer python_c.py_decref(py_msg);
+    _ = python_c.PyDict_SetItemString(context_dict, "message\x00", py_msg);
 
     if (context) |ctx| {
-        _ = python_c.PyDict_SetItemString(context_dict, ctx.module_name, ctx.module_ptr);
-        if (ctx.callback_ptr) |c_ptr| {
-            _ = python_c.PyDict_SetItemString(context_dict, "callback\x00", c_ptr);
+        _ = python_c.PyDict_SetItemString(context_dict, "module\x00", ctx.module_ptr);
+        if (ctx.callback_ptr) |cp| {
+            _ = python_c.PyDict_SetItemString(context_dict, "callback\x00", cp);
         }
     }
 
-    // Call loop.call_exception_handler(context)
-    const call_exception_handler = python_c.PyObject_GetAttrString(@ptrCast(loop_obj), "call_exception_handler\x00") orelse {
-        python_c.PyErr_Clear();
-        return;
-    };
-    defer python_c.py_decref(call_exception_handler);
+    const py_err_name = @errorName(err);
+    const py_err_obj = python_c.PyUnicode_FromString(py_err_name.ptr) orelse return error.PythonError;
+    defer python_c.py_decref(py_err_obj);
+    _ = python_c.PyDict_SetItemString(context_dict, "exception\x00", py_err_obj);
 
-    const ret = python_c.PyObject_CallOneArg(call_exception_handler, context_dict) orelse {
+    const ret = python_c.PyObject_CallMethod(@ptrCast(loop_obj), "call_exception_handler\x00", "O\x00", context_dict) orelse {
+        if (python_c.PyErr_Occurred()) |exc| {
+            if (python_c.PyErr_GivenExceptionMatches(exc, python_c.PyExc_KeyboardInterrupt.?) != 0 or
+                python_c.PyErr_GivenExceptionMatches(exc, python_c.PyExc_SystemExit.?) != 0) {
+                return error.PythonError;
+            }
+        }
         python_c.PyErr_Clear();
         return;
     };
@@ -107,13 +89,14 @@ fn slow_callback_warning_handler(
 }
 
 pub inline fn call_once(
-    ready_queue: *CallbackManager.CallbacksSetsQueue,
-    ready_tasks_queue_max_capacity: usize,
+    ready_queue: *CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity),
+    _: usize,
     loop_obj: *Loop.Python.LoopObject
 ) !usize {
     const debug_state = CallbackManager.DebugState{ .slow_callback_duration = loop_obj.slow_callback_duration };
 
-    const callbacks_executed = try CallbackManager.execute_callbacks(
+    const callbacks_executed = try CallbackManager.execute_ring_buffer(
+        CallbackManager.ReadyTasksQueueCapacity,
         ready_queue,
         if (builtin.is_test) null else &exception_handler,
         loop_obj,
@@ -121,7 +104,7 @@ pub inline fn call_once(
         if (loop_obj.debug) &debug_state else null
     );
     if (callbacks_executed == 0) {
-        ready_queue.prune(ready_tasks_queue_max_capacity);
+        ready_queue.reset();
     }
 
     return callbacks_executed;
@@ -130,22 +113,15 @@ pub inline fn call_once(
 fn execute_hooks(hooks: *Loop.HooksList) !void {
     var node = hooks.first;
     while (node) |n| {
-        const callback = n.data;
-        try callback.func(&.{
-            .user_data = callback.data.user_data,
-            .exception_context = callback.data.exception_context,
-            .io_uring_res = 0,
-            .io_uring_err = .SUCCESS,
-            .cancelled = false,
-        });
         node = n.next;
+        try n.data.func(&n.data.data);
     }
 }
 
 fn fetch_completed_tasks(
     self: *Loop,
     blocking_ready_tasks: []std.os.linux.io_uring_cqe,
-    ready_queue: *CallbackManager.CallbacksSetsQueue
+    ready_queue: *CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity)
 ) !void {
     for (blocking_ready_tasks) |cqe| {
         const user_data = cqe.user_data;
@@ -160,7 +136,7 @@ fn fetch_completed_tasks(
                 v.data.io_uring_res = cqe.res;
 
                 blocking_task.check_result(err);
-                _ = ready_queue.try_append(v) orelse return error.Overflow;
+                if (!ready_queue.try_push(v.*)) return error.Overflow;
                 self.reserved_slots -= 1;
             },
             .none => {}
@@ -172,15 +148,15 @@ fn fetch_completed_tasks(
 
 fn poll_blocking_events(
     self: *Loop,
-    mutex: *Lock,
+    mutex: *lock.Mutex,
     wait: bool,
-    ready_queue: *CallbackManager.CallbacksSetsQueue
+    ready_queue: *CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity)
 ) !void {
     const blocking_ready_tasks = self.io.blocking_ready_tasks;
 
     var nevents: u32 = undefined;
     while (true) {
-        if (wait and ready_queue.empty()) {
+        if (wait and ready_queue.is_empty()) {
             self.io.ring_blocked = true;
             mutex.unlock();
             defer {
@@ -192,12 +168,18 @@ fn poll_blocking_events(
             defer PyEval_RestoreThread(py_thread_state);
 
             nevents = self.io.ring.copy_cqes(blocking_ready_tasks, 1) catch |err| {
-                if (err == error.SignalInterrupt) continue;
+                if (err == error.SignalInterrupt) {
+                    if (python_c.PyErr_Occurred() != null) return error.PythonError;
+                    continue;
+                }
                 return err;
             };
         } else {
             nevents = self.io.ring.copy_cqes(blocking_ready_tasks, 0) catch |err| {
-                if (err == error.SignalInterrupt) continue;
+                if (err == error.SignalInterrupt) {
+                    if (python_c.PyErr_Occurred() != null) return error.PythonError;
+                    continue;
+                }
                 return err;
             };
         }
@@ -241,7 +223,6 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
         self.stopping = false;
     }
 
-    const ready_tasks_queues: []CallbackManager.CallbacksSetsQueue = &self.ready_tasks_queues;
     const ready_tasks_queue_max_capacity = self.ready_tasks_queue_max_capacity;
 
     var ready_tasks_queue_index = self.ready_tasks_queue_index;
@@ -250,12 +231,7 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
         if (loop_obj.owner_pid != std.os.linux.getpid()) break;
 
         const old_index = ready_tasks_queue_index;
-        const ready_tasks_queue = &ready_tasks_queues[old_index];
-
-        const reserved_slots = self.reserved_slots;
-        for (ready_tasks_queues) |*queue| {
-            try queue.ensure_capacity(reserved_slots);
-        }
+        const ready_tasks_queue = &self.ready_tasks_queues[old_index];
 
         try poll_blocking_events(self, mutex, wait_for_blocking_events, ready_tasks_queue);
 

@@ -322,12 +322,6 @@ pub fn loop_close(self: ?*LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
             python_c.raise_python_runtime_error("Loop is running\x00");
             return null;
         }
-
-        for (&loop_data.ready_tasks_queues) | *queue| {
-            queue.ensure_capacity(loop_data.reserved_slots) catch |err| {
-                return utils.handle_zig_function_error(err, null);
-            };
-        }
     }
 
     loop_data.release();

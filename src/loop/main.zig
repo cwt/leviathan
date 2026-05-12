@@ -1,10 +1,22 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const python_c = @import("python_c");
-const CallbackManager = @import("callback_manager");
+const PyObject = *python_c.PyObject;
 
+const utils = @import("utils");
+const lock = @import("../utils/lock.zig");
+
+const CallbackManager = @import("callback_manager");
+pub const Scheduling = @import("scheduling/main.zig");
+const FSWatcher = @import("fs_watcher.zig");
+const ChildWatcher = @import("child_watcher.zig");
+const UnixSignals = @import("unix_signals.zig");
+
+pub const DNS = @import("dns/main.zig");
 const Handle = @import("../handle.zig");
 
+pub const WatchersBTree = utils.BTree(std.posix.fd_t, *FDWatcher, 11);
 
 pub const FDWatcher = struct {
     handle: *Handle.PythonHandleObject,
@@ -14,26 +26,15 @@ pub const FDWatcher = struct {
     fd: std.posix.fd_t
 };
 
-const utils = @import("utils");
-const WatchersBTree = utils.BTree(std.posix.fd_t, *FDWatcher, 11);
 pub const HooksList = utils.LinkedList(CallbackManager.Callback);
-
-const lock = @import("../utils/lock.zig");
 
 pub fn init_module(_: std.mem.Allocator) void {}
 
 allocator: std.mem.Allocator,
 
-fs_watcher: FSWatcher,
-child_watcher: ChildWatcher,
-
-ready_tasks_queue_index: u8 = 0,
-
-ready_tasks_queues: [2]CallbackManager.CallbacksSetsQueue,
-reserved_slots: usize = 0,
-
-io: Scheduling.IO,
-dns: DNS,
+initialized: bool = false,
+running: bool = false,
+stopping: bool = false,
 
 reader_watchers: WatchersBTree,
 writer_watchers: WatchersBTree,
@@ -44,14 +45,19 @@ idle_hooks: HooksList,
 
 ready_tasks_queue_max_capacity: usize,
 
+ready_tasks_queue_index: u8 = 0,
+ready_tasks_queues: *[2]CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity),
+reserved_slots: usize = 0,
+
+io: Scheduling.IO,
+dns: DNS,
+
+fs_watcher: FSWatcher,
+child_watcher: ChildWatcher,
+
 mutex: lock.Mutex,
 
 unix_signals: UnixSignals,
-
-running: bool = false,
-stopping: bool = false,
-initialized: bool = false,
-
 
 pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) !void {
     if (self.initialized) {
@@ -65,25 +71,31 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
     var writer_watchers = try WatchersBTree.init(allocator);
     errdefer writer_watchers.deinit() catch {};
 
-    self.* = .{
-        .allocator = allocator,
-        .mutex = lock.init(),
-        .ready_tasks_queues = .{
-            CallbackManager.CallbacksSetsQueue.init(allocator),
-            CallbackManager.CallbacksSetsQueue.init(allocator)
-        },
-        .ready_tasks_queue_max_capacity = rtq_max_capacity / @sizeOf(CallbackManager.Callback),
-        .reader_watchers = reader_watchers,
-        .writer_watchers = writer_watchers,
-        .prepare_hooks = HooksList.init(allocator),
-        .check_hooks = HooksList.init(allocator),
-        .idle_hooks = HooksList.init(allocator),
-        .fs_watcher = .{},
-        .child_watcher = .{},
-        .unix_signals = .{},
-        .io = .{},
-        .dns = .{},
-    };
+    const queues = try allocator.create([2]CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity));
+    errdefer allocator.destroy(queues);
+    queues[0].init();
+    queues[1].init();
+
+    self.allocator = allocator;
+    self.mutex = lock.init();
+    self.ready_tasks_queues = queues;
+    self.ready_tasks_queue_index = 0;
+    self.reserved_slots = 0;
+    self.reader_watchers = reader_watchers;
+    self.writer_watchers = writer_watchers;
+    self.prepare_hooks = HooksList.init(allocator);
+    self.check_hooks = HooksList.init(allocator);
+    self.idle_hooks = HooksList.init(allocator);
+    self.fs_watcher = .{};
+    self.child_watcher = .{};
+    self.unix_signals = .{};
+    self.io = .{};
+    self.dns = .{};
+    self.running = false;
+    self.stopping = false;
+    self.initialized = true;
+    self.ready_tasks_queue_max_capacity = rtq_max_capacity / @sizeOf(CallbackManager.Callback);
+
     try self.fs_watcher.init(self);
     try self.child_watcher.init(self);
 
@@ -97,8 +109,6 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
 
     try self.dns.init(self);
     errdefer self.dns.deinit();
-
-    self.initialized = true;
 }
 
 pub fn release(self: *Loop) void {
@@ -109,15 +119,16 @@ pub fn release(self: *Loop) void {
     }
     self.initialized = false;
 
+    self.dns.deinit();
     self.fs_watcher.deinit();
     self.child_watcher.deinit();
     self.io.deinit();
     self.unix_signals.deinit();
 
-    const allocator = self.allocator;
-    for (&self.ready_tasks_queues) |*ready_tasks_queue| {
-        CallbackManager.release_sets_queue(allocator, ready_tasks_queue);
+    for (self.ready_tasks_queues) |*ready_tasks_queue| {
+        CallbackManager.release_ring_buffer(CallbackManager.ReadyTasksQueueCapacity, ready_tasks_queue);
     }
+    self.allocator.destroy(self.ready_tasks_queues);
 
     // Cancel any remaining watcher I/O before deinit
     {
@@ -126,25 +137,18 @@ pub fn release(self: *Loop) void {
         while (self.writer_watchers.pop(&sig)) |_| {}
     }
 
-    self.reader_watchers.deinit() catch |err| {
-        std.debug.panic("Unexpected error while releasing reader watchers: {s}", .{@errorName(err)});
-    };
-    self.writer_watchers.deinit() catch |err| {
-        std.debug.panic("Unexpected error while releasing writer watchers: {s}", .{@errorName(err)});
-    };
+    self.reader_watchers.deinit() catch {};
+    self.writer_watchers.deinit() catch {};
 
     self.prepare_hooks.clear();
     self.check_hooks.clear();
     self.idle_hooks.clear();
-
-    self.dns.deinit();
 }
 
 pub inline fn reserve_slots(self: *Loop, amount: usize) !void {
     const new_value = self.reserved_slots + amount;
-    const active_queue = &self.ready_tasks_queues[self.ready_tasks_queue_index];
-    if (active_queue.available_slots < new_value) {
-        try active_queue.ensure_capacity(new_value);
+    if (new_value > CallbackManager.ReadyTasksQueueCapacity) {
+        return error.Overflow;
     }
     self.reserved_slots = new_value;
 }
@@ -152,7 +156,7 @@ pub inline fn reserve_slots(self: *Loop, amount: usize) !void {
 pub const HookType = enum {
     prepare,
     check,
-    idle
+    idle,
 };
 
 pub fn add_hook(self: *Loop, hook_type: HookType, callback: CallbackManager.Callback) !HooksList.Node {
@@ -177,24 +181,13 @@ pub fn remove_hook(self: *Loop, hook_type: HookType, node: HooksList.Node) void 
 }
 
 pub const Runner = @import("runner.zig");
-pub const Scheduling = @import("scheduling/main.zig");
-pub const UnixSignals = @import("unix_signals.zig");
 pub const Python = @import("python/main.zig");
-pub const DNS = @import("dns/main.zig");
-pub const FSWatcher = @import("fs_watcher.zig");
-pub const ChildWatcher = @import("child_watcher.zig");
-
-test {
-    _ = Runner;
-    _ = Scheduling;
-    _ = UnixSignals;
-    _ = Python;
-    _ = DNS;
-}
 
 test "loop hooks" {
     const allocator = std.testing.allocator;
-    var loop: Loop = undefined;
+    const loop = try allocator.create(Loop);
+    defer allocator.destroy(loop);
+
     try loop.init(allocator, 1024);
     defer loop.release();
 

@@ -267,11 +267,25 @@ test "get_cache_slot handles different hostname lengths" {
 }
 
 test "DNS deinit cleanup" {
-    var loop: Loop = undefined;
-    loop.allocator = std.testing.allocator;
-    loop.dns.pending_queries = DNS.PendingList.init(std.testing.allocator);
-    loop.dns.arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    loop.dns.loop = &loop;
+    const allocator = std.testing.allocator;
+    const loop = try allocator.create(Loop);
+    defer allocator.destroy(loop);
+
+    loop.allocator = allocator;
+    loop.mutex = @import("../../utils/lock.zig").init();
+    
+    const queues = try allocator.create([2]CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity));
+    defer allocator.destroy(queues);
+    queues[0].init();
+    queues[1].init();
+    loop.ready_tasks_queues = queues;
+
+    loop.ready_tasks_queue_index = 0;
+    loop.reserved_slots = 0;
+
+    loop.dns.pending_queries = DNS.PendingList.init(allocator);
+    loop.dns.arena = std.heap.ArenaAllocator.init(allocator);
+    loop.dns.loop = loop;
     
     loop.dns.deinit();
 }

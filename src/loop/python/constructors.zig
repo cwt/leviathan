@@ -84,7 +84,7 @@ pub fn loop_traverse(self: ?*LoopObject, visit: python_c.visitproc, arg: ?*anyop
     if (!loop_data.initialized) return 0;
 
     // Visit ready tasks queues
-    for (&loop_data.ready_tasks_queues) |*queue| {
+    for (loop_data.ready_tasks_queues) |*queue| {
         const vret_q = queue.traverse(visit, arg);
         if (vret_q != 0) return vret_q;
     }
