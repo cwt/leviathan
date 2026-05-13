@@ -389,6 +389,26 @@ of a nested context struct.
 Task-intensive benchmarks gained 5-10%. The smaller dispatch struct means less
 cache pressure and fewer memory bandwidth cycles per dispatch.
 
+### UDP Ping-Pong Timeout (Pre-existing Bug)
+
+UDP Ping-Pong benchmark times out at M=1024. This is a pre-existing bug —
+confirmed at baseline rev 446 (before any Priority 11 changes).
+The `create_datagram_endpoint` call hangs indefinitely even at the base.
+
+**Suspected cause:** The `create_datagram_endpoint` callback chain
+(`resolve_local_addr` → `resolve_remote_addr` → `create_endpoint`) uses
+`Soon.dispatch()` which pushes to the ready queue. If the first callback
+in the chain executes but dispatches the next one, and something in the
+loop prevents the next callback from being reached, the chain stalls.
+
+**Not related to SQE batching.** All operations submit immediately at
+baseline rev 446 (no batching), yet the hang exists.
+
+**`IOSQE_ASYNC` removal experiment:** Removing `IOSQE_ASYNC` from all IO
+ops did NOT fix the UDP hang. However, it broke 2 watcher tests
+(`test_add_and_remove_reader/writer`) because polls completed inline
+before `remove_reader` could cancel them. Reverted.
+
 ### Safety Checklist
 
 - [x] **Lesson 1 (Atomic Sleep):** `should_wait` is evaluated AFTER flush, inside the mutex — safe
