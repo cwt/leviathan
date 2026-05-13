@@ -207,6 +207,9 @@ inline fn z_loop_init(
     const loop_data = utils.get_data_ptr(Loop, self);
     try loop_data.init(allocator, @intCast(ready_tasks_queue_min_bytes_capacity));
 
+    self.asyncio_tasks_set = python_c.PyObject_GetAttrString(@ptrCast(self), "_asyncio_tasks\x00");
+    python_c.PyErr_Clear();
+
     return 0;
 }
 

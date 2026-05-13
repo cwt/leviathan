@@ -344,6 +344,8 @@ pub const LoopObject = extern struct {
     asyncgens_set_discard: ?PyObject,
     old_asyncgen_hooks: ?PyObject,
 
+    asyncio_tasks_set: ?PyObject,
+
     exception_handler: ?PyObject,
     task_name_counter: u64,
     owner_pid: std.posix.pid_t,

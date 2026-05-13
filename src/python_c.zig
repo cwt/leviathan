@@ -595,4 +595,7 @@ pub const PyThreadState = opaque {};
 pub extern fn PyEval_SaveThread() ?*PyThreadState;
 pub extern fn PyEval_RestoreThread(?*PyThreadState) void;
 
+pub extern fn PySet_Add(set: ?*PyObject, key: ?*PyObject) c_int;
+pub extern fn PySet_Discard(set: ?*PyObject, key: ?*PyObject) c_int;
+
 const Python = @This();

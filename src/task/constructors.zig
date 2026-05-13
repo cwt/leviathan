@@ -36,9 +36,11 @@ inline fn task_init_configuration(
 }
 
 inline fn task_schedule_coro(self: *PythonTaskObject, loop: *LoopObject) !void {
-    const ret: PyObject = python_c.PyObject_CallOneArg(utils.PythonImports.register_task_func, @ptrCast(self))
-        orelse return error.PythonError;
-    python_c.py_decref(ret);
+    if (loop.asyncio_tasks_set) |tasks_set| {
+        if (python_c.PySet_Add(tasks_set, @ptrCast(self)) < 0) {
+            return error.PythonError;
+        }
+    }
 
     const loop_data = utils.get_data_ptr(Loop, loop);
 
