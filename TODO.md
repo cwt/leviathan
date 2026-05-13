@@ -276,13 +276,13 @@ This ensures:
 
 | # | Task | Files | Status |
 |---|------|-------|:---:|
-| 11.1 | Remove `submit_guaranteed()` from IO op functions — just prep SQE and return | `read.zig`, `write.zig`, `socket.zig`, `timer.zig`, `cancel.zig` | 🔴 Pending |
-| 11.2 | Add `IO.flush_pending_sqes()` — flush SQEs + `ring.submit()` with EINTR safety | `io/main.zig` | 🔴 Pending |
-| 11.3 | Wire auto-flush in IO op path: if `sq_ready() >= TotalTasksItems - 2`, auto-submit | `io/main.zig` `queue()` | 🔴 Pending |
-| 11.4 | Wire forced flush into `poll_blocking_events()` before `copy_cqes()` | `runner.zig` | 🔴 Pending |
-| 11.5 | Fix `cancel.zig`: flush pending SQEs before submitting cancel SQE | `cancel.zig` | 🔴 Pending |
-| 11.6 | Keep eventfd registration as immediate submit (Lesson 9) | `io/main.zig` | 🔴 Pending |
-| 11.7 | Run full test suite + benchmarks | All | 🔴 Pending |
+| 11.1 | Remove `submit_guaranteed()` from IO op functions — just prep SQE and return | `read.zig`, `write.zig`, `socket.zig`, `timer.zig`, `cancel.zig` | ✅ **DONE** |
+| 11.2 | Add `IO.flush_pending_sqes()` — flush SQEs + `ring.submit()` with EINTR safety | `io/main.zig` | ✅ **DONE** |
+| 11.3 | Wire auto-flush in IO op path: if `sq_ready() >= TotalTasksItems - 2`, auto-submit | `io/main.zig` `queue()` | ✅ **DONE** |
+| 11.4 | Wire forced flush into `poll_blocking_events()` before `copy_cqes()` | `runner.zig` | ✅ **DONE** |
+| 11.5 | Fix cancellation: `queue()` flushes SQEs before dispatching Cancel | `io/main.zig` | ✅ **DONE** |
+| 11.6 | Keep eventfd registration as immediate submit (Lesson 9) | `io/main.zig` | ✅ **DONE** |
+| 11.7 | Run full test suite + benchmarks | All | ✅ **DONE** |
 
 #### Phase 2: Combined Submit+Wait (future)
 
@@ -292,13 +292,29 @@ This ensures:
 | 11.9 | Batch CQE reaping — process all CQEs per `copy_cqes` without re-entering loop | 🔴 Future |
 | 11.10 | Registered buffers / fixed files for hot paths | 🔴 Future |
 
+### Actual Impact (measured 2026-05-13)
+
+| Benchmark | Before (446) | After (447) | Change | Notes |
+|-----------|:-----------:|:----------:|:------:|-------|
+| TCP Echo 65536 | 0.39× | 0.46× | +18% | High variance (stdev=60%), marginal |
+| Unix Echo 65536 | 0.21× | 0.45× | **+114%** | Improvement at large sizes |
+| UDP Ping-Pong | 0.65× | 0.65× | ~same | Noise dominates |
+| Socket Ops | 0.52× | 0.56× | ~same | Fixed overhead dominates |
+| Task Spawn | 0.44× | 0.46× | ~same | Different bottleneck |
+| Task Workflow | 0.46× | 0.52× | +13% | Mixed IO+task |
+
+**Key insight:** Benchmark noise (stdev 30-60% of mean) dwarfs the batching improvement at these operation counts. The existing benchmarks scale `M` as total bytes transferred, not concurrent IO operations — so at M=65536 there are only ~64 connections. The batching benefit will be proportional to **operations per loop iteration**, which benchmarks don't stress.
+
+**Phase 2 (combined submit+wait) will compound this improvement** by eliminating the second syscall (copy_cqes also calls `io_uring_enter`).
+
 ### Safety Checklist
 
-- [ ] **Lesson 1 (Atomic Sleep):** Unaffected — flush happens BEFORE queue check, under same mutex
-- [ ] **Lesson 2 (EINTR):** `flush_pending_sqes()` wraps `submit_guaranteed()` — already EINTR-safe
-- [ ] **Lesson 9 (EventFD):** `register_eventfd_callback()` still calls `submit_guaranteed()` immediately — no change
-- [ ] **Cancellation correctness:** `cancel.zig` flushes SQ before submitting cancel — target visible to kernel
-- [ ] **No indefinite deferral:** `poll_blocking_events()` forces flush on every loop iteration — max deferral is 1 loop tick
+- [x] **Lesson 1 (Atomic Sleep):** `should_wait` is evaluated AFTER flush, inside the mutex — safe
+- [x] **Lesson 2 (EINTR):** `flush_pending_sqes()` uses `submit_guaranteed()` — already EINTR-safe
+- [x] **Lesson 9 (EventFD):** `register_eventfd_callback()` still calls `submit_guaranteed()` immediately — no change
+- [x] **Cancellation correctness:** `queue()` flushes SQ before dispatching Cancel — target visible to kernel
+- [x] **No indefinite deferral:** `poll_blocking_events()` forces flush on every iteration — max deferral is 1 tick
+- [x] **No deadlock on idle loop:** `should_wait=false` when flush submits 0 and `reserved_slots==0`
 
 ---
 

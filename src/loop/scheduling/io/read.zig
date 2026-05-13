@@ -26,18 +26,12 @@ pub fn wait_ready(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: 
     const sqe = try ring.poll_add(@intCast(@intFromPtr(data_ptr)), data.fd, std.c.POLL.IN);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    var expected_submission: u32 = 1;
     if (data.timeout) |*timeout| {
         sqe.flags |= std.os.linux.IOSQE_IO_LINK;
         const timeout_sqe = try ring.link_timeout(0, timeout, 0);
         timeout_sqe.flags |= std.os.linux.IOSQE_ASYNC;
-        expected_submission += 1;
     }
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret != expected_submission) {
-        return error.SQENotSubmitted;
-    }
     return @intFromPtr(data_ptr);
 }
 
@@ -48,10 +42,6 @@ pub fn recvmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Rec
     const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret != 1) {
-        return error.SQENotSubmitted;
-    }
     return @intFromPtr(data_ptr);
 }
 
@@ -80,17 +70,11 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
     };
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    var expected_submission: u32 = 1;
     if (data.timeout) |*timeout| {
         sqe.flags |= std.os.linux.IOSQE_IO_LINK;
         const timeout_sqe = try ring.link_timeout(0, timeout, 0);
         timeout_sqe.flags |= std.os.linux.IOSQE_ASYNC;
-        expected_submission += 1;
     }
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret != expected_submission) {
-        return error.SQENotSubmitted;
-    }
     return @intFromPtr(data_ptr);
 }

@@ -151,11 +151,22 @@ fn poll_blocking_events(
     wait: bool,
     ready_queue: *CallbackManager.DynamicRingBuffer
 ) !void {
+    // Flush any pending SQEs from the previous callback batch
+    // so they're visible to the kernel before we wait for completions.
+    const submitted = try self.io.flush_pending_sqes();
+
+    // If nothing was submitted AND no ops are in-flight, there's nothing
+    // to wait for — avoid deadlock by skipping the blocking wait.
+    var should_wait = wait;
+    if (submitted == 0 and self.reserved_slots == 0) {
+        should_wait = false;
+    }
+
     const blocking_ready_tasks = self.io.blocking_ready_tasks;
 
     var nevents: u32 = undefined;
     while (true) {
-        if (wait and ready_queue.is_empty()) {
+        if (should_wait and ready_queue.is_empty()) {
             self.io.ring_blocked = true;
             mutex.unlock();
             defer {
