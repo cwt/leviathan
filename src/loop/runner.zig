@@ -151,18 +151,13 @@ fn poll_blocking_events(
     wait: bool,
     ready_queue: *CallbackManager.DynamicRingBuffer
 ) !void {
-    // Flush any pending SQEs from the previous callback batch
-    // so they're visible to the kernel before we wait for completions.
-    const submitted = try self.io.flush_pending_sqes();
+    const blocking_ready_tasks = self.io.blocking_ready_tasks;
 
-    // If nothing was submitted AND no ops are in-flight, there's nothing
-    // to wait for — avoid deadlock by skipping the blocking wait.
+    // If nothing is in-flight, there's nothing to wait for.
     var should_wait = wait;
-    if (submitted == 0 and self.reserved_slots == 0) {
+    if (should_wait and self.reserved_slots == 0) {
         should_wait = false;
     }
-
-    const blocking_ready_tasks = self.io.blocking_ready_tasks;
 
     var nevents: u32 = undefined;
     while (true) {
@@ -177,21 +172,22 @@ fn poll_blocking_events(
             const py_thread_state = PyEval_SaveThread();
             defer PyEval_RestoreThread(py_thread_state);
 
-            nevents = self.io.ring.copy_cqes(blocking_ready_tasks, 1) catch |err| {
+            // Phase 2: Combined submit + wait in one io_uring_enter syscall.
+            // Flush pending SQEs (deferred polls) AND wait for completions.
+            // submit_and_wait calls flush_sq() then enter(to_submit, 1, GETEVENTS).
+            _ = self.io.ring.submit_and_wait(1) catch |err| {
                 if (err == error.SignalInterrupt) {
                     if (python_c.PyErr_Occurred() != null) return error.PythonError;
                     continue;
                 }
                 return err;
             };
+            // Copy CQEs from shared ring — no extra syscall.
+            nevents = try self.io.ring.copy_cqes(blocking_ready_tasks, 0);
         } else {
-            nevents = self.io.ring.copy_cqes(blocking_ready_tasks, 0) catch |err| {
-                if (err == error.SignalInterrupt) {
-                    if (python_c.PyErr_Occurred() != null) return error.PythonError;
-                    continue;
-                }
-                return err;
-            };
+            // Non-blocking: flush pending SQEs, then peek at CQEs.
+            _ = try self.io.flush_pending_sqes();
+            nevents = try self.io.ring.copy_cqes(blocking_ready_tasks, 0);
         }
         break;
     }
@@ -201,7 +197,7 @@ fn poll_blocking_events(
 
         if (nevents == blocking_ready_tasks.len) {
             nevents = try self.io.ring.copy_cqes(blocking_ready_tasks, 0);
-        }else{
+        } else {
             break;
         }
     }
