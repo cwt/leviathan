@@ -172,29 +172,14 @@ Once the dispatch layer is O(1), the next bottleneck is io_uring submission/reap
 
 ## 🔴 PRIORITY 10: Python/Zig Boundary Overhead Elimination (2026-05-13)
 
-### Root Cause of 0.2-0.4× Task Performance
+### Root Cause of 0.2-0.4× Task Performance (REVISED)
 
-Task Spawn benchmark (zero I/O, pure `create_task()`) shows leviathan at **0.21-0.39×** asyncio. Every `asyncio.sleep(0)` costs **12 Python/Zig boundary crossings** — each one pushes/tears down a Python stack frame:
+Task Spawn benchmark (zero I/O, pure `create_task()`) shows leviathan at **0.21-0.39×** asyncio. The original analysis blamed 12 "Python/Zig boundary crossings" but this was incorrect — in CPython 3.14, `_enter_task`/`_leave_task`/`_register_task`/`all_tasks` are all **C builtins** (from the `_asyncio` C module), not Python bytecode. `PyObject_Vectorcall` on a C builtin is just a function pointer call — same cost as calling from Zig directly.
 
-```
-create_task → register_task (Python)  |  1 crossing
-execute_task_send → _enter_task       |  2
-execute_task_send → PyContext_Enter   |  3
-execute_task_send → PyIter_Send       |  4  (coro starts)
-  coro → loop.call_later              |  5  (coro sleeps)
-  coro suspends, yields Future
-execute_task_send → PyContext_Exit    |  6
-execute_task_send → _leave_task       |  7
-...timer fires...
-wakeup → PyIter_Send                  |  8  (coro resumes)
-  coro → _leave_task                  |  9
-```
+The real bottleneck after debugging: the 80-byte `Callback` struct copy per `Soon.dispatch` + `PyIter_Send` overhead (coroutine startup is inherently expensive). These are architectural costs of leviathan's design.
 
-The same work in uvloop takes ~3 crossings because enter/leave/context are inline C, not Python callbacks.
-
-### Observation
-
-Three of these calls (`_register_task`, `_enter_task`, `_leave_task`) are just PySet operations on `loop._asyncio_tasks` — we can call `PySet_Add`/`PySet_Discard` directly from Zig. No Python frame needed.
+**Conclusion: Priority 10 is WON'T FIX.** The perceived boundary crossings were already near-optimal. The core bottleneck is in the task creation and dispatch architecture itself.
+**Conclusion: Priority 10 is WON'T FIX.** The perceived boundary crossings were already near-optimal. The core bottleneck is in the task creation and dispatch architecture itself.
 
 ### Implementation Plan
 
@@ -203,13 +188,13 @@ Three of these calls (`_register_task`, `_enter_task`, `_leave_task`) are just P
 | # | Task | Files | Status |
 |---|------|-------|:---:|
 | 10.1 | Cache `loop._asyncio_tasks` PySet pointer at loop init | `loop/main.zig`, `loop/python/constructors.zig`, `loop.py` | ✅ DONE |
-| 10.2 | Replace `PyObject_Vectorcall(_register_task)` with `PySet_Add` in `task_schedule_coro` | `task/constructors.zig` | ⚠️ REVERTED — `_asyncio_tasks` not used by `all_tasks()` C builtin |
-| 10.3 | Replace `PyObject_Vectorcall(_enter_task)` with direct set/dict ops | `task/callbacks.zig` | 🔴 Stalled — `import path was wrong (asyncio.task_info is not a module; it's in asyncio.tasks). Now known: access asyncio.tasks.task_info.running_tasks dict. PySet_Add + PyDict_SetItem ready.` |
-| 10.4 | Replace `PyObject_Vectorcall(_leave_task)` with direct set/dict ops | `task/callbacks.zig` | 🔴 Stalled — same import fix as 10.3. PySet_Discard + PyDict_DelItem ready. |
-| 10.5 | Skip `PyContext_Enter`/`Exit` when context is default | `task/callbacks.zig` | 🔴 Pending |
-| 10.6 | Run full test suite + benchmarks | All | ✅ DONE (263 tests pass, no perf regression) |
+| 10.2 | Replace `PyObject_Vectorcall(_register_task)` with `PySet_Add` in `task_schedule_coro` | `task/constructors.zig` | ⚠️ WON'T FIX — `_register_task` is a C builtin, no Python frame overhead |
+| 10.3 | Replace `PyObject_Vectorcall(_enter_task)` with direct set/dict ops | `task/callbacks.zig` | ⚠️ WON'T FIX — `_enter_task` is a C builtin in 3.14 |
+| 10.4 | Replace `PyObject_Vectorcall(_leave_task)` with direct set/dict ops | `task/callbacks.zig` | ⚠️ WON'T FIX — `_leave_task` is a C builtin in 3.14 |
+| 10.5 | Skip `PyContext_Enter`/`Exit` when context is default | `task/callbacks.zig` | 🔴 Pending — minor savings, context ops are also C calls |
+| 10.6 | Run full test suite + benchmarks | All | ✅ DONE (263 tests pass, 11 benchmarks complete) |
 
-**Expected impact:** 3-4 boundary crossings eliminated per task step. Task-intensive benchmarks (Event Fiesta, Producer-Consumer, Task Workflow, Task Spawn) should improve from 0.2-0.4× toward 0.5-0.7×. I/O benchmarks unaffected (already flat).
+**Expected impact:** 0.2-0.4× task performance is an architectural bottleneck (PyIter_Send + 80-byte Callback copy per dispatch). Priority 10 optimizations cannot fix this.
 
 #### Phase 2: Further boundary reductions (future)
 
