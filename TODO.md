@@ -206,6 +206,100 @@ The real bottleneck after debugging: the 80-byte `Callback` struct copy per `Soo
 
 ---
 
+## 🔴 PRIORITY 11: SQE Batch Submission — io_uring Batching (2026-05-13)
+
+### Root Cause of 0.2-0.5× I/O Performance
+
+Every IO operation (read, write, poll, connect, accept, shutdown, timer, cancel) calls `IO.submit_guaranteed()` immediately after prepping the SQE — **1 `io_uring_enter` syscall per SQE**. Verified across all 6 IO op files and all 46 revisions of the project:
+
+| Rev | Pattern | Batch? |
+|-----|---------|:------:|
+| 240 | `ring.submit()` after each op | ❌ |
+| 276 | `ring.submit()` + `error.SQENotSubmitted` | ❌ |
+| 292 | Single ring, still `ring.submit()` per op | ❌ |
+| 353 | `IO.submit_guaranteed()` wrapper (EINTR-safe) | ❌ |
+| 433 | Priority 9 ring buffer; submission unchanged | ❌ |
+| tip | Same as 433 | ❌ |
+
+For TCP Echo with 65536 messages: **131,072 `io_uring_enter` syscalls** for read+write. With batching: **~2 syscalls per loop iteration** regardless of message count.
+
+High standard deviation (Unix Echo stdev=58% of mean, TCP Echo stdev=64%) confirms the bursty pattern: completions arrive unpredictably because there's no periodic flush point aggregating SQEs into a single `io_uring_enter`.
+
+### Why Previous Attempt Failed (`.orig` files)
+
+The `.orig` files (dated May 12, 7:08am — same day as Priority 9) represent an uncommitted, half-finished batching attempt with a fatal flaw:
+
+```
+queue() preps SQE, returns, then:
+  if sq_ready() >= TotalTasksItems - 2: submit()
+```
+
+**Problem 1 — No forced flush:** If the workload has only 1-2 operations per loop iteration, SQEs sit in the submission queue **indefinitely** with no flush trigger. Deadlock.
+
+**Problem 2 — Cancellation breaks:** `cancel.zig` submits a new SQE targeting `task_id`. If the target SQE is still in the submission queue (not flushed), the kernel has no record of the original operation — cancel is a silent no-op.
+
+**Problem 3 — Eventfd deadlock:** Without immediate submission for eventfd registration (Lesson 9), background threads can't wake the loop.
+
+### Design: Deferred Submission with Forced Flush
+
+The key insight: **don't submit in IO op functions. Instead, flush all pending SQEs at a single point in the loop runner.**
+
+```
+Before:  IO op → prep SQE → submit_guaranteed() → return task_id
+After:   IO op → prep SQE → [flush if SQ near full] → return task_id
+         poll_blocking_events(): flush_pending_sqes() → copy_cqes()
+         cancel.zig:           flush_pending_sqes() → prep cancel SQE → submit()
+```
+
+This ensures:
+1. All SQEs from a callback batch are submitted in ONE `io_uring_enter` call
+2. No SQE sits indefinitely — `poll_blocking_events()` always flushes before waiting
+3. Cancellation works because we flush before cancel
+4. Eventfd registration still submits immediately (exception)
+
+### Expected Impact
+
+| Benchmark | Current | Expected | Why |
+|-----------|:-------:|:--------:|-----|
+| TCP Echo | 0.31-0.62× | **1.5-3.0×** | 2 syscalls/msg → 2 syscalls/batch |
+| Unix Echo | 0.17-0.40× | **1.5-3.0×** | Same pattern |
+| Producer-Consumer | 0.42-0.93× | **1.0-2.0×** | Mix of task + IO |
+| Async Task Workflow | 0.46-0.86× | **1.0-2.0×** | Many IO ops between tasks |
+| Socket Ops | 0.52× | **2.0-4.0×** | Mostly syscall-bound |
+| Subprocess | 0.24× | **0.5-1.0×** | waitid/pipe syscalls batched |
+| UDP Ping-Pong | 0.65-0.85× | **1.5-3.0×** | recvmsg+sendmsg batched |
+| Task Spawn | 0.41-0.44× | **0.41-0.44×** | No IO — different bottleneck |
+
+### Implementation Plan
+
+#### Phase 1: Core Batching (this session)
+
+| # | Task | Files | Status |
+|---|------|-------|:---:|
+| 11.1 | Remove `submit_guaranteed()` from IO op functions — just prep SQE and return | `read.zig`, `write.zig`, `socket.zig`, `timer.zig`, `cancel.zig` | 🔴 Pending |
+| 11.2 | Add `IO.flush_pending_sqes()` — flush SQEs + `ring.submit()` with EINTR safety | `io/main.zig` | 🔴 Pending |
+| 11.3 | Wire auto-flush in IO op path: if `sq_ready() >= TotalTasksItems - 2`, auto-submit | `io/main.zig` `queue()` | 🔴 Pending |
+| 11.4 | Wire forced flush into `poll_blocking_events()` before `copy_cqes()` | `runner.zig` | 🔴 Pending |
+| 11.5 | Fix `cancel.zig`: flush pending SQEs before submitting cancel SQE | `cancel.zig` | 🔴 Pending |
+| 11.6 | Keep eventfd registration as immediate submit (Lesson 9) | `io/main.zig` | 🔴 Pending |
+| 11.7 | Run full test suite + benchmarks | All | 🔴 Pending |
+
+#### Phase 2: Combined Submit+Wait (future)
+
+| # | Task | Status |
+|---|------|:---:|
+| 11.8 | Replace `flush_pending_sqes()` + `copy_cqes()` with combined `io_uring_enter(to_submit, wait_nr, GETEVENTS)` — one syscall instead of two | 🔴 Future |
+| 11.9 | Batch CQE reaping — process all CQEs per `copy_cqes` without re-entering loop | 🔴 Future |
+| 11.10 | Registered buffers / fixed files for hot paths | 🔴 Future |
+
+### Safety Checklist
+
+- [ ] **Lesson 1 (Atomic Sleep):** Unaffected — flush happens BEFORE queue check, under same mutex
+- [ ] **Lesson 2 (EINTR):** `flush_pending_sqes()` wraps `submit_guaranteed()` — already EINTR-safe
+- [ ] **Lesson 9 (EventFD):** `register_eventfd_callback()` still calls `submit_guaranteed()` immediately — no change
+- [ ] **Cancellation correctness:** `cancel.zig` flushes SQ before submitting cancel — target visible to kernel
+- [ ] **No indefinite deferral:** `poll_blocking_events()` forces flush on every loop iteration — max deferral is 1 loop tick
+
 ---
 
 ## ✅ Completed Next Steps
