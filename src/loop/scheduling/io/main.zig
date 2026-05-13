@@ -44,6 +44,15 @@ pub const BlockingTask = struct {
     operation: BlockingOperation,
     index: u16,
 
+    /// Persistent storage for io_uring pointer target data.
+    /// io_uring stores pointers in sqe.addr that the kernel dereferences
+    /// at submit time. With deferred submission, the pointed-to data must
+    /// outlive the caller's stack. These fields live in task_data_pool.
+    /// Only used for operations where the caller passes stack data:
+    /// currently only Timer.wait (timespec on stack). All other operations
+    /// (connect, accept, recvmsg, sendmsg) pass heap-allocated data.
+    timer_storage: std.os.linux.kernel_timespec = undefined,
+
     inline fn reset(self: *BlockingTask) *BlockingTasksSet {
         const set: *BlockingTasksSet = @ptrFromInt(
             @intFromPtr(self) - @as(usize, self.index) * @sizeOf(BlockingTask)

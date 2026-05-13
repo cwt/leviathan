@@ -18,37 +18,28 @@ pub fn wait(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: WaitDa
     const data_ptr = try set.push(.WaitTimer, &data.callback);
     errdefer data_ptr.discard();
 
-    const timespec_sec_info = @typeInfo(@FieldType(std.os.linux.timespec, "sec")).int;
-    const kernel_timespec_sec_info = @typeInfo(@FieldType(std.os.linux.kernel_timespec, "sec")).int;
-    if (
-        timespec_sec_info.bits == kernel_timespec_sec_info.bits and
-        timespec_sec_info.signedness == kernel_timespec_sec_info.signedness
-    ) {
-        const sqe = try ring.timeout(
-            @intCast(@intFromPtr(data_ptr)),
-            @ptrCast(&data.duration), 0,
-            @intFromEnum(data.delay_type)
-        );
-        sqe.flags |= std.os.linux.IOSQE_ASYNC;
-    }else{
-        const k_duration: std.os.linux.kernel_timespec = .{
-            .sec = data.duration.tv_sec,
-            .nsec = data.duration.tv_nsec
+    // Copy timespec to persistent BlockingTask storage.
+    // ring.timeout() stores a pointer in sqe.addr. With deferred submission,
+    // the kernel reads this pointer at flush time (in poll_blocking_events),
+    // not here. The data must be valid until then.
+    const ts_sec_info = @typeInfo(@FieldType(std.os.linux.timespec, "sec")).int;
+    const kts_sec_info = @typeInfo(@FieldType(std.os.linux.kernel_timespec, "sec")).int;
+    if (ts_sec_info.bits == kts_sec_info.bits and ts_sec_info.signedness == kts_sec_info.signedness) {
+        data_ptr.timer_storage = @bitCast(data.duration);
+    } else {
+        data_ptr.timer_storage = .{
+            .sec = @intCast(data.duration.tv_sec),
+            .nsec = @intCast(data.duration.tv_nsec),
         };
-
-        const sqe = try ring.timeout(
-            @intCast(@intFromPtr(data_ptr)),
-            &k_duration, 0,
-            @intFromEnum(data.delay_type)
-        );
-        sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
-    // Immediate submit: ring.timeout stores a pointer to data.duration
-    // in sqe.addr. Kernel dereferences at submit time.
-    // Also: other SQEs (e.g., deferred polls) may be pending, so we
-    // accept ret >= 1 rather than checking for exactly 1.
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    const sqe = try ring.timeout(
+        @intCast(@intFromPtr(data_ptr)),
+        &data_ptr.timer_storage, 0,
+        @intFromEnum(data.delay_type)
+    );
+    sqe.flags |= std.os.linux.IOSQE_ASYNC;
+
+    // Deferred submission — flushed by poll_blocking_events().
     return @intFromPtr(data_ptr);
 }

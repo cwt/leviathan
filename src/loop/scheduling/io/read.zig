@@ -44,7 +44,8 @@ pub fn recvmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Rec
     const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    // Immediate submit: ring.recvmsg stores msg header pointer in sqe.addr.
+    // Immediate submit: recvmsg stores msghdr pointer in sqe.addr.
+    // msghdr is heap-allocated in transport data (safe), but latency-sensitive.
     const ret = try IO.submit_guaranteed(ring);
     if (ret == 0) return error.SQENotSubmitted;
     return @intFromPtr(data_ptr);

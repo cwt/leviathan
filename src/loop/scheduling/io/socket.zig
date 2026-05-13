@@ -32,8 +32,8 @@ pub fn connect(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Con
     );
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    // Deferred: ring.connect stores a pointer to data.addr which points to
+    // heap-allocated SockConnectData — safe until completion.
     return @intFromPtr(data_ptr);
 }
 
@@ -44,8 +44,8 @@ pub fn accept(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Acce
     const sqe = try ring.accept(@intCast(@intFromPtr(data_ptr)), data.socket_fd, data.addr, data.addrlen, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    // Deferred: ring.accept stores pointers to data.addr/data.addrlen which
+    // point to heap-allocated SockAcceptData — safe until completion.
     return @intFromPtr(data_ptr);
 }
 
