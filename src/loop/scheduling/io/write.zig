@@ -85,8 +85,7 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
         timeout_sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    // Deferred: heap buffer in WriteTransport.busy_buffers — safe.
     return @intFromPtr(data_ptr);
 }
 
@@ -112,7 +111,6 @@ pub fn perform_with_iovecs(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSe
         timeout_sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    // Deferred: heap iovecs in WriteTransport.busy_buffers — safe.
     return @intFromPtr(data_ptr);
 }

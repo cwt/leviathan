@@ -82,8 +82,7 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
         timeout_sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
-    // Immediate submit: ring.read stores buffer pointer in sqe.addr.
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    // Deferred: ring.read stores buffer pointer. Buffer is in transport
+    // struct (heap) — safe until completion. Flushed by poll_blocking_events().
     return @intFromPtr(data_ptr);
 }
