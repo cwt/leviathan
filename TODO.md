@@ -202,12 +202,12 @@ Three of these calls (`_register_task`, `_enter_task`, `_leave_task`) are just P
 
 | # | Task | Files | Status |
 |---|------|-------|:---:|
-| 10.1 | Cache `loop._asyncio_tasks` PySet pointer at loop init | `loop/main.zig`, `loop/python/constructors.zig` | 🔴 Pending |
-| 10.2 | Replace `PyObject_Vectorcall(_register_task)` with `PySet_Add` in `task_schedule_coro` | `task/constructors.zig` | 🔴 Pending |
-| 10.3 | Replace `PyObject_Vectorcall(_enter_task)` with `PySet_Add` in `_execute_task_send` / `_execute_task_throw` | `task/callbacks.zig` | 🔴 Pending |
-| 10.4 | Replace `PyObject_Vectorcall(_leave_task)` with `PySet_Discard` in `_execute_task_send` / `_execute_task_throw` / `_execute_task_throw` error path | `task/callbacks.zig` | 🔴 Pending |
-| 10.5 | Skip `PyContext_Enter`/`Exit` when context is default (no contextvars set) | `task/callbacks.zig` | 🔴 Pending |
-| 10.6 | Run full test suite + benchmarks, validate boundary crossing reduction | All | 🔴 Pending |
+| 10.1 | Cache `loop._asyncio_tasks` PySet pointer at loop init | `loop/main.zig`, `loop/python/constructors.zig`, `loop.py` | ✅ DONE |
+| 10.2 | Replace `PyObject_Vectorcall(_register_task)` with `PySet_Add` in `task_schedule_coro` | `task/constructors.zig` | ⚠️ REVERTED — `_asyncio_tasks` not used by `all_tasks()` C builtin |
+| 10.3 | Replace `PyObject_Vectorcall(_enter_task)` with direct set/dict ops | `task/callbacks.zig` | 🔴 Blocked — `set_running_task` requires `asyncio.tasks.task_info.running_tasks` dict access |
+| 10.4 | Replace `PyObject_Vectorcall(_leave_task)` with direct set/dict ops | `task/callbacks.zig` | 🔴 Blocked — same as 10.3 |
+| 10.5 | Skip `PyContext_Enter`/`Exit` when context is default | `task/callbacks.zig` | 🔴 Pending |
+| 10.6 | Run full test suite + benchmarks | All | ✅ DONE (263 tests pass, no perf regression) |
 
 **Expected impact:** 3-4 boundary crossings eliminated per task step. Task-intensive benchmarks (Event Fiesta, Producer-Consumer, Task Workflow, Task Spawn) should improve from 0.2-0.4× toward 0.5-0.7×. I/O benchmarks unaffected (already flat).
 

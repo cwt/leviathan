@@ -598,4 +598,9 @@ pub extern fn PyEval_RestoreThread(?*PyThreadState) void;
 pub extern fn PySet_Add(set: ?*PyObject, key: ?*PyObject) c_int;
 pub extern fn PySet_Discard(set: ?*PyObject, key: ?*PyObject) c_int;
 
+pub extern fn PyDict_SetItem(dict: ?*PyObject, key: ?*PyObject, val: ?*PyObject) c_int;
+pub extern fn PyDict_DelItem(dict: ?*PyObject, key: ?*PyObject) c_int;
+
+pub extern fn PyLong_FromSize_t(size: usize) ?*PyObject;
+
 const Python = @This();
