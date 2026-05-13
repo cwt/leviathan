@@ -32,6 +32,8 @@ pub fn wait_ready(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: 
         timeout_sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
+    // POLL_ADD has no pointer args — safe to defer submission.
+    // Will be flushed by poll_blocking_events().
     return @intFromPtr(data_ptr);
 }
 
@@ -42,6 +44,9 @@ pub fn recvmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Rec
     const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
+    // Immediate submit: ring.recvmsg stores msg header pointer in sqe.addr.
+    const ret = try IO.submit_guaranteed(ring);
+    if (ret == 0) return error.SQENotSubmitted;
     return @intFromPtr(data_ptr);
 }
 
@@ -76,5 +81,8 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
         timeout_sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
+    // Immediate submit: ring.read stores buffer pointer in sqe.addr.
+    const ret = try IO.submit_guaranteed(ring);
+    if (ret == 0) return error.SQENotSubmitted;
     return @intFromPtr(data_ptr);
 }

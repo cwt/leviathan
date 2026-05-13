@@ -32,6 +32,8 @@ pub fn connect(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Con
     );
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
+    const ret = try IO.submit_guaranteed(ring);
+    if (ret == 0) return error.SQENotSubmitted;
     return @intFromPtr(data_ptr);
 }
 
@@ -42,6 +44,8 @@ pub fn accept(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Acce
     const sqe = try ring.accept(@intCast(@intFromPtr(data_ptr)), data.socket_fd, data.addr, data.addrlen, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
+    const ret = try IO.submit_guaranteed(ring);
+    if (ret == 0) return error.SQENotSubmitted;
     return @intFromPtr(data_ptr);
 }
 
@@ -52,5 +56,6 @@ pub fn shutdown(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Sh
     const sqe = try ring.shutdown(@intCast(@intFromPtr(data_ptr)), data.socket_fd, data.how);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
+    // No pointer args — safe to defer. Flushed by poll_blocking_events().
     return @intFromPtr(data_ptr);
 }

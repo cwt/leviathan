@@ -44,5 +44,11 @@ pub fn wait(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: WaitDa
         sqe.flags |= std.os.linux.IOSQE_ASYNC;
     }
 
+    // Immediate submit: ring.timeout stores a pointer to data.duration
+    // in sqe.addr. Kernel dereferences at submit time.
+    // Also: other SQEs (e.g., deferred polls) may be pending, so we
+    // accept ret >= 1 rather than checking for exactly 1.
+    const ret = try IO.submit_guaranteed(ring);
+    if (ret == 0) return error.SQENotSubmitted;
     return @intFromPtr(data_ptr);
 }
