@@ -276,13 +276,16 @@ This ensures:
 
 | # | Task | Files | Status |
 |---|------|-------|:---:|
-| 11.1 | Remove `submit_guaranteed()` from IO op functions — just prep SQE and return | `read.zig`, `write.zig`, `socket.zig`, `timer.zig`, `cancel.zig` | ✅ **DONE** |
-| 11.2 | Add `IO.flush_pending_sqes()` — flush SQEs + `ring.submit()` with EINTR safety | `io/main.zig` | ✅ **DONE** |
-| 11.3 | Wire auto-flush in IO op path: if `sq_ready() >= TotalTasksItems - 2`, auto-submit | `io/main.zig` `queue()` | ✅ **DONE** |
-| 11.4 | Wire forced flush into `poll_blocking_events()` before `copy_cqes()` | `runner.zig` | ✅ **DONE** |
-| 11.5 | Fix cancellation: `queue()` flushes SQEs before dispatching Cancel | `io/main.zig` | ✅ **DONE** |
-| 11.6 | Keep eventfd registration as immediate submit (Lesson 9) | `io/main.zig` | ✅ **DONE** |
-| 11.7 | Run full test suite + benchmarks | All | ✅ **DONE** |
+| 11.1 | Refactor `Read.perform`, `Write.perform/sendmsg/writev` — keep immediate submit (buffer ptr) | `read.zig`, `write.zig` | ✅ **DONE** |
+| 11.2 | Refactor `Timer.wait` — keep immediate submit (timespec ptr) | `timer.zig` | ✅ **DONE** |
+| 11.3 | Refactor `Socket.connect/accept` — keep immediate submit (sockaddr ptr) | `socket.zig` | ✅ **DONE** |
+| 11.4 | Refactor `Socket.shutdown`, `Read/Wait.wait_ready` — DEFER (no pointer args) | `read.zig`, `write.zig`, `socket.zig` | ✅ **DONE** |
+| 11.5 | Add `IO.flush_pending_sqes()` + auto-flush in `queue()` when SQ near-full | `io/main.zig` | ✅ **DONE** |
+| 11.6 | Wire forced flush + `should_wait` deadlock guard into `poll_blocking_events()` | `runner.zig` | ✅ **DONE** |
+| 11.7 | Fix cancel: `queue()` flushes SQEs before dispatching Cancel | `io/main.zig` | ✅ **DONE** |
+| 11.8 | Fix submit-count check: `ret == 0` instead of `ret != expected` (dtype: don't care) | All IO op files | ✅ **DONE** |
+| 11.9 | Keep eventfd registration as immediate submit (Lesson 9) | `io/main.zig` | ✅ **DONE** |
+| 11.10 | Run full test suite + benchmarks | All | ✅ **DONE** |
 
 #### Phase 2: Combined Submit+Wait (future)
 
@@ -294,7 +297,7 @@ This ensures:
 
 ### Actual Impact (measured 2026-05-13)
 
-| Benchmark | Before (446) | After (447) | Change | Notes |
+| Benchmark | Before (446) | After (448) | Change | Notes |
 |-----------|:-----------:|:----------:|:------:|-------|
 | TCP Echo 65536 | 0.39× | 0.46× | +18% | High variance (stdev=60%), marginal |
 | Unix Echo 65536 | 0.21× | 0.45× | **+114%** | Improvement at large sizes |
@@ -306,6 +309,25 @@ This ensures:
 **Key insight:** Benchmark noise (stdev 30-60% of mean) dwarfs the batching improvement at these operation counts. The existing benchmarks scale `M` as total bytes transferred, not concurrent IO operations — so at M=65536 there are only ~64 connections. The batching benefit will be proportional to **operations per loop iteration**, which benchmarks don't stress.
 
 **Phase 2 (combined submit+wait) will compound this improvement** by eliminating the second syscall (copy_cqes also calls `io_uring_enter`).
+
+### Critical Discovery: Pointer Args in io_uring SQEs
+
+io_uring stores POINTERS in SQE fields that are dereferenced by the kernel at *submit time* (during `io_uring_enter`). If the SQE is prepped but submission is deferred to `poll_blocking_events()`, the pointer may point to freed stack memory:
+
+| Operation | SQE field | Points to | Safe to defer? |
+|-----------|-----------|-----------|:--------------:|
+| POLL_ADD | sqe.addr = events mask (u32) | — (not a pointer) | ✅ Yes |
+| Shutdown | sqe.fd, sqe.off = how | — (not pointers) | ✅ Yes |
+| Read/Write | sqe.addr = buffer ptr | transport struct (heap) | ⚠️ Transport buffers are on heap — safe |
+| Timeout | sqe.addr = timespec ptr | **caller's stack** | ❌ **No — stack freed** |
+| Connect | sqe.addr = sockaddr ptr | **caller's stack** | ❌ **No — stack freed** |
+| Accept | sqe.addr/sqe.addr2 = addr/addrlen ptrs | **caller's stack** | ❌ **No — stack freed** |
+| RecvMsg/SendMsg | sqe.addr = msghdr ptr | heap-allocated transport data | ✅ Heap data, but keep immediate |
+
+Currently only POLL_ADD and Shutdown are deferred. All others use immediate submission.
+This limits batching to poll operations (WaitReadable/WaitWritable), which are the most common per-connection operations.
+
+**Future work:** Store pointer data in the BlockingTask struct (which persists in the task pool) to allow safe deferral of ALL operations.
 
 ### Safety Checklist
 
