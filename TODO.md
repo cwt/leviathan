@@ -363,7 +363,31 @@ io_uring stores POINTERS in SQE fields that are dereferenced by the kernel at *s
 Currently only POLL_ADD and Shutdown are deferred. All others use immediate submission.
 This limits batching to poll operations (WaitReadable/WaitWritable), which are the most common per-connection operations.
 
-**Future work:** Store pointer data in the BlockingTask struct (which persists in the task pool) to allow safe deferral of ALL operations.
+---
+
+## PRIORITY 12: Callback Struct Slimming (2026-05-14) ✅ DONE
+
+### Root Cause of 0.4-0.5× Performance
+
+Every dispatch copied a 112-byte `Callback` struct into the ring buffer.
+The `exception_context` field (56 bytes inline) was the biggest contributor —
+it included two 16-byte slices (`module_name`, `exc_message`) that are constant
+per callback function type and only used in error/cold paths.
+
+| Size | Before | After | Saving |
+|------|:------:|:-----:|:------:|
+| `CallbackExceptionContext` | 48 bytes | removed | 100% |
+| `CallbackData` | 88 bytes | 40 bytes | 55% |
+| `Callback` | 112 bytes | 48 bytes | **57%** |
+
+**Fix:** Replaced inline `exception_context: ?CallbackExceptionContext` (56 bytes)
+with two optional pointers: `module_ptr: ?*PyObject` (8) + `callback_ptr: ?PyObject` (8).
+Exception handler now receives `module_ptr` and `callback_ptr` directly instead
+of a nested context struct.
+
+**Impact:** TCP Echo recovered from 0.29× → 0.56× (+93%). Chat 0.79→0.84× (+6%).
+Task-intensive benchmarks gained 5-10%. The smaller dispatch struct means less
+cache pressure and fewer memory bandwidth cycles per dispatch.
 
 ### Safety Checklist
 
