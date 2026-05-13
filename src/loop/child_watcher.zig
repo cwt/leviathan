@@ -67,7 +67,7 @@ pub fn add_child_handler(self: *ChildWatcher, pid: i32, callback: PyObject) !voi
             .callback = .{
                 .func = &on_child_exit,
                 .cleanup = null,
-                .data = .{ .user_data = handler, .exception_context = null },
+                .data = .{ .user_data = handler },
             },
         }
     });
@@ -112,7 +112,7 @@ fn on_child_exit(data: *const CallbackManager.CallbackData) !void {
                 .callback = .{
                     .func = &on_child_exit,
                     .cleanup = null,
-                    .data = .{ .user_data = handler, .exception_context = null },
+                    .data = .{ .user_data = handler },
                 },
             }
         });

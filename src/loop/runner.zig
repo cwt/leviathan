@@ -13,37 +13,29 @@ const CallbackManager = @import("callback_manager");
 const Loop = @import("main.zig");
 const Future = @import("../future/main.zig");
 
-fn slow_callback_warning_handler(duration: f64, context: ?CallbackManager.CallbackExceptionContext, data: ?*anyopaque) void {
+fn slow_callback_warning_handler(duration: f64, module_ptr: ?*python_c.PyObject, data: ?*anyopaque) void {
     const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(data.?));
     const loop_data = utils.get_data_ptr(Loop, loop_obj);
 
-    const msg_allocated = if (context) |ctx|
-        std.fmt.allocPrint(loop_data.allocator, "Executing callback took {d:.6} seconds (context: {s})", .{ duration, ctx.exc_message }) catch null
-    else
-        std.fmt.allocPrint(loop_data.allocator, "Executing callback took {d:.6} seconds", .{ duration }) catch null;
-    
-    const msg = msg_allocated orelse "Executing callback took too long";
-    defer if (msg_allocated) |m| loop_data.allocator.free(m);
+    const msg = std.fmt.allocPrint(loop_data.allocator, "Executing callback took {d:.6} seconds\x00", .{duration}) catch return;
+    defer loop_data.allocator.free(msg);
 
     const context_dict = python_c.PyDict_New() orelse return;
     defer python_c.py_decref(context_dict);
 
-    const py_msg = python_c.PyUnicode_FromStringAndSize(msg.ptr, @intCast(msg.len)) orelse return;
+    const py_msg = python_c.PyUnicode_FromString(msg.ptr) orelse return;
     defer python_c.py_decref(py_msg);
     _ = python_c.PyDict_SetItemString(context_dict, "message\x00", py_msg);
 
-    if (context) |ctx| {
-        _ = python_c.PyDict_SetItemString(context_dict, "module\x00", ctx.module_ptr);
-        if (ctx.callback_ptr) |cp| {
-            _ = python_c.PyDict_SetItemString(context_dict, "callback\x00", cp);
-        }
+    if (module_ptr) |mod| {
+        _ = python_c.PyDict_SetItemString(context_dict, "module\x00", mod);
     }
 
     const ret = python_c.PyObject_CallMethod(@ptrCast(loop_obj), "call_exception_handler\x00", "O\x00", context_dict) orelse {
         if (python_c.PyErr_Occurred()) |exc| {
             if (python_c.PyErr_GivenExceptionMatches(exc, python_c.PyExc_KeyboardInterrupt.?) != 0 or
                 python_c.PyErr_GivenExceptionMatches(exc, python_c.PyExc_SystemExit.?) != 0) {
-                return; // Can't return error from void function, but we shouldn't PyErr_Clear()
+                return;
             }
         }
         python_c.PyErr_Clear();
@@ -52,22 +44,19 @@ fn slow_callback_warning_handler(duration: f64, context: ?CallbackManager.Callba
     python_c.py_decref(ret);
 }
 
-fn exception_handler(err: anyerror, data: ?*anyopaque, context: ?CallbackManager.CallbackExceptionContext) !void {
+fn exception_handler(err: anyerror, data: ?*anyopaque, module_ptr: ?*python_c.PyObject, callback_ptr: ?PyObject) !void {
     const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(data.?));
     
     const context_dict = python_c.PyDict_New() orelse return error.PythonError;
     defer python_c.py_decref(context_dict);
 
-    const msg = if (context) |ctx| ctx.exc_message else "Exception in callback";
-    const py_msg = python_c.PyUnicode_FromString(msg.ptr) orelse return error.PythonError;
-    defer python_c.py_decref(py_msg);
-    _ = python_c.PyDict_SetItemString(context_dict, "message\x00", py_msg);
+    _ = python_c.PyDict_SetItemString(context_dict, "message\x00", python_c.PyUnicode_FromString("Exception in callback\x00") orelse return error.PythonError);
 
-    if (context) |ctx| {
-        _ = python_c.PyDict_SetItemString(context_dict, "module\x00", ctx.module_ptr);
-        if (ctx.callback_ptr) |cp| {
-            _ = python_c.PyDict_SetItemString(context_dict, "callback\x00", cp);
-        }
+    if (module_ptr) |mod| {
+        _ = python_c.PyDict_SetItemString(context_dict, "module\x00", mod);
+    }
+    if (callback_ptr) |cp| {
+        _ = python_c.PyDict_SetItemString(context_dict, "callback\x00", cp);
     }
 
     const py_err_name = @errorName(err);

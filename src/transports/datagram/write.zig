@@ -137,7 +137,7 @@ pub fn z_datagram_sendto(self: *DatagramTransport.DatagramTransportObject, args:
                 .callback = .{
                     .func = &sendto_completed,
                     .cleanup = null,
-                    .data = .{ .user_data = sd, .exception_context = null },
+                    .data = .{ .user_data = sd },
                 },
                 .flags = 0,
             },
@@ -156,7 +156,7 @@ pub fn z_datagram_sendto(self: *DatagramTransport.DatagramTransportObject, args:
             .callback = .{
                 .func = &write_completed,
                 .cleanup = null,
-                .data = .{ .user_data = self, .exception_context = null },
+                .data = .{ .user_data = self },
             },
             .offset = 0,
             .timeout = null,

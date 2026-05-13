@@ -49,12 +49,8 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
             .cleanup = &Handle.release_python_generic_callback,
             .data = .{
                 .user_data = handle,
-                .exception_context = .{
-                    .module_ptr = @ptrCast(handle),
-                    .exc_message = Handle.ExceptionMessage,
-                    .module_name = Handle.ModuleName,
-                    .callback_ptr = handle.py_callback.?
-                }
+                .module_ptr = @ptrCast(handle),
+            .callback_ptr = null,
             }
         };
 
@@ -76,8 +72,7 @@ fn loop_watchers_callback(data: *const CallbackManager.CallbackData) !void {
             .func = &loop_watchers_callback,
             .cleanup = null,
             .data = .{
-                .user_data = watcher,
-                .exception_context = null
+                .user_data = watcher
             }
         };
 
@@ -236,8 +231,7 @@ inline fn z_loop_add_watcher(
         .func = &loop_watchers_callback,
         .cleanup = null,
         .data = .{
-            .user_data = watcher_data_ptr,
-            .exception_context = null
+            .user_data = watcher_data_ptr
         }
         // .ZigGenericIO = .{
         //     .callback = &loop_watchers_callback,

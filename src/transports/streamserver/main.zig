@@ -199,7 +199,6 @@ fn enqueue_accept(server: *StreamServerObject) !void {
                 .cleanup = null,
                 .data = .{
                     .user_data = server,
-                    .exception_context = null,
                 },
             },
         },

@@ -101,7 +101,7 @@ inline fn z_loop_getnameinfo(self: *LoopObject, args: []const ?PyObject) !*Futur
     const callback = CallbackManager.Callback{
         .func = &getnameinfo_callback,
         .cleanup = null,
-        .data = .{ .user_data = gnid, .exception_context = null },
+        .data = .{ .user_data = gnid },
     };
     
     try loop_data.dns.reverse_lookup(addr, &callback);

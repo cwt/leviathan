@@ -6,21 +6,13 @@ const PyObject = *python_c.PyObject;
 
 const utils = @import("utils");
 
-pub const CallbackExceptionContext = struct {
-    module_name: [:0]const u8,
-    module_ptr: *python_c.PyObject,
-
-    callback_ptr: ?PyObject,
-    exc_message: [:0]const u8
-};
-
-pub const ExceptionHandler = *const fn (anyerror, ?*anyopaque, ?CallbackExceptionContext) anyerror!void;
+pub const ExceptionHandler = *const fn (anyerror, ?*anyopaque, ?*python_c.PyObject, ?PyObject) anyerror!void;
 
 pub const DebugState = struct {
     slow_callback_duration: f64,
 };
 
-pub const WarningHandler = *const fn (duration: f64, ?CallbackExceptionContext, ?*anyopaque) void;
+pub const WarningHandler = *const fn (duration: f64, ?*python_c.PyObject, ?*anyopaque) void;
 
 pub const CallbackData = struct {
     io_uring_res: i32 = 0,
@@ -28,8 +20,9 @@ pub const CallbackData = struct {
 
     user_data: ?*anyopaque,
 
-    exception_context: ?CallbackExceptionContext,
     cancelled: bool = false,
+    module_ptr: ?*python_c.PyObject = null,
+    callback_ptr: ?PyObject = null,
 
     traverse: ?*const fn (ptr: ?*anyopaque, visit: ?*anyopaque, arg: ?*anyopaque) c_int = null,
 };
@@ -128,10 +121,10 @@ pub fn RingBuffer(comptime N: usize) type {
                     if (vret != 0) return vret;
                 }
 
-                if (callback.data.exception_context) |ctx| {
-                    const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
+                if (callback.data.module_ptr) |mod| {
+                    const vret1 = visit.?(@ptrCast(mod), arg);
                     if (vret1 != 0) return vret1;
-                    if (ctx.callback_ptr) |cp| {
+                    if (callback.data.callback_ptr) |cp| {
                         const vret2 = visit.?(@ptrCast(cp), arg);
                         if (vret2 != 0) return vret2;
                     }
@@ -140,6 +133,14 @@ pub fn RingBuffer(comptime N: usize) type {
             return 0;
         }
     };
+}
+
+fn exec_error_handler(handler: ExceptionHandler, data: ?*anyopaque, cb_data: *const CallbackData) void {
+    handler(cb_data.user_data.?, data, cb_data.module_ptr, cb_data.callback_ptr) catch {};
+}
+
+fn exec_warning_handler(handler: WarningHandler, duration: f64, cb_data: *const CallbackData, data: ?*anyopaque) void {
+    handler(duration, cb_data.module_ptr, data);
 }
 
 pub const DynamicRingBuffer = struct {
@@ -278,10 +279,10 @@ pub const DynamicRingBuffer = struct {
                 if (vret != 0) return vret;
             }
 
-            if (callback.data.exception_context) |ctx| {
-                const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
+            if (callback.data.module_ptr) |mod| {
+                const vret1 = visit.?(@ptrCast(mod), arg);
                 if (vret1 != 0) return vret1;
-                if (ctx.callback_ptr) |cp| {
+                if (callback.data.callback_ptr) |cp| {
                     const vret2 = visit.?(@ptrCast(cp), arg);
                     if (vret2 != 0) return vret2;
                 }
@@ -308,9 +309,9 @@ pub fn execute_ring_buffer(
 
     while (ring.next()) |callback| {
         if (debug_state != null) {
-            if (callback.data.exception_context) |ctx| {
-                python_c.py_incref(ctx.module_ptr);
-                if (ctx.callback_ptr) |cp| python_c.py_incref(cp);
+            if (callback.data.module_ptr) |mod| {
+                python_c.py_incref(mod);
+                if (callback.data.callback_ptr) |cp| python_c.py_incref(cp);
             }
         }
 
@@ -336,7 +337,7 @@ pub fn execute_ring_buffer(
             }
 
             const handler = exception_handler orelse return err;
-            handler(err, exception_handler_data, callback.data.exception_context) catch |err2| {
+            handler(err, exception_handler_data, callback.data.module_ptr, callback.data.callback_ptr) catch |err2| {
                 return err2;
             };
             continue;
@@ -347,12 +348,12 @@ pub fn execute_ring_buffer(
             const duration = @as(f64, @floatFromInt(end_time - start_time)) / 1e9;
             if (duration >= ds.slow_callback_duration) {
                 if (warning_handler) |wh| {
-                    wh(duration, callback.data.exception_context, exception_handler_data);
+                    wh(duration, callback.data.module_ptr, exception_handler_data);
                 }
             }
-            if (callback.data.exception_context) |ctx| {
-                python_c.py_decref(ctx.module_ptr);
-                if (ctx.callback_ptr) |cp| python_c.py_decref(cp);
+            if (callback.data.module_ptr) |mod| {
+                python_c.py_decref(mod);
+                if (callback.data.callback_ptr) |cp| python_c.py_decref(cp);
             }
         }
 
@@ -395,9 +396,9 @@ pub fn execute_dynamic_ring_buffer(
 
     while (ring.next()) |callback| {
         if (debug_state != null) {
-            if (callback.data.exception_context) |ctx| {
-                python_c.py_incref(ctx.module_ptr);
-                if (ctx.callback_ptr) |cp| python_c.py_incref(cp);
+            if (callback.data.module_ptr) |mod| {
+                python_c.py_incref(mod);
+                if (callback.data.callback_ptr) |cp| python_c.py_incref(cp);
             }
         }
 
@@ -426,7 +427,7 @@ pub fn execute_dynamic_ring_buffer(
             }
 
             const handler = exception_handler orelse return err;
-            handler(err, exception_handler_data, callback.data.exception_context) catch |err2| {
+            handler(err, exception_handler_data, callback.data.module_ptr, callback.data.callback_ptr) catch |err2| {
                 return err2;
             };
             continue;
@@ -437,12 +438,12 @@ pub fn execute_dynamic_ring_buffer(
             const duration = @as(f64, @floatFromInt(end_time - start_time)) / 1e9;
             if (duration >= ds.slow_callback_duration) {
                 if (warning_handler) |wh| {
-                    wh(duration, callback.data.exception_context, exception_handler_data);
+                    wh(duration, callback.data.module_ptr, exception_handler_data);
                 }
             }
-            if (callback.data.exception_context) |ctx| {
-                python_c.py_decref(ctx.module_ptr);
-                if (ctx.callback_ptr) |cp| python_c.py_decref(cp);
+            if (callback.data.module_ptr) |mod| {
+                python_c.py_decref(mod);
+                if (callback.data.callback_ptr) |cp| python_c.py_decref(cp);
             }
         }
 
@@ -483,7 +484,7 @@ fn test_callback2(_: *const CallbackData) !void {
     return error.Test;
 }
 
-fn test_exception_handler(err: anyerror, data: ?*anyopaque, _: ?CallbackExceptionContext) !void {
+fn test_exception_handler(err: anyerror, data: ?*anyopaque, _: ?*python_c.PyObject, _: ?PyObject) !void {
     try std.testing.expectEqual(error.Test, err);
 
     const executed_ptr: *usize = @alignCast(@ptrCast(data.?));
@@ -527,8 +528,7 @@ test "RingBuffer push and execute" {
         .func = &test_callback,
         .cleanup = null,
         .data = .{
-            .user_data = &executed,
-            .exception_context = null
+            .user_data = &executed
         }
     };
 
@@ -565,12 +565,12 @@ test "RingBuffer handle exceptions" {
     const cb1 = Callback{
         .func = &test_callback,
         .cleanup = null,
-        .data = .{ .user_data = &executed, .exception_context = null }
+        .data = .{ .user_data = &executed }
     };
     const cb2 = Callback{
         .func = &test_callback2,
         .cleanup = null,
-        .data = .{ .user_data = null, .exception_context = null }
+        .data = .{ .user_data = null }
     };
 
     rb.push(cb1);
@@ -603,12 +603,8 @@ test "RingBuffer traverse" {
         .cleanup = null,
         .data = .{
             .user_data = null,
-            .exception_context = .{
-                .module_name = "test",
-                .module_ptr = @ptrCast(&dummy_obj),
-                .callback_ptr = null,
-                .exc_message = "error",
-            }
+            .module_ptr = @ptrCast(&dummy_obj),
+            .callback_ptr = null,
         }
     };
 

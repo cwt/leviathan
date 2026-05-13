@@ -101,7 +101,7 @@ pub fn init(
     self.prepare_hook_node = try loop.add_hook(.prepare, .{
         .func = &flush_buffered_writes,
         .cleanup = null,
-        .data = .{ .user_data = self, .exception_context = null },
+        .data = .{ .user_data = self },
     });
 }
 
@@ -193,12 +193,8 @@ inline fn queue_remaining_data(self: *WriteTransport, data_written: usize) !void
                     .cleanup = &cleanup_resources_callback,
                     .data = .{
                         .user_data = self,
-                        .exception_context = .{
-                            .callback_ptr = null,
-                            .exc_message = ExceptionMessage,
-                            .module_name = ModuleName,
-                            .module_ptr = self.parent_transport
-                        }
+                        .module_ptr = null,
+            .callback_ptr = null,
                     }
                 },
                 .fd = self.fd,
@@ -331,12 +327,8 @@ pub fn queue_buffers_and_swap(self: *WriteTransport) !void {
                     .cleanup = &cleanup_resources_callback,
                     .data = .{
                         .user_data = self,
-                        .exception_context = .{
-                            .callback_ptr = null,
-                            .exc_message = ExceptionMessage,
-                            .module_name = ModuleName,
-                            .module_ptr = self.parent_transport
-                        }
+                        .module_ptr = null,
+            .callback_ptr = null,
                     }
                 },
                 .fd = self.fd,

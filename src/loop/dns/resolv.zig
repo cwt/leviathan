@@ -147,10 +147,10 @@ pub const ControlData = struct {
 
     pub fn traverse(self: *const ControlData, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
         for (self.user_callbacks.items) |*v| {
-            if (v.data.exception_context) |ctx| {
-                const vret1 = visit.?(@ptrCast(ctx.module_ptr), arg);
+            if (v.data.module_ptr) |mod| {
+                const vret1 = visit.?(@ptrCast(mod), arg);
                 if (vret1 != 0) return vret1;
-                if (ctx.callback_ptr) |cp| {
+                if (v.data.callback_ptr) |cp| {
                     const vret2 = visit.?(@ptrCast(cp), arg);
                     if (vret2 != 0) return vret2;
                 }
@@ -216,7 +216,6 @@ fn check_send_operation_result(data: *const CallbackManager.CallbackData) !void 
                     .cleanup = &cleanup_server_query_data,
                     .data = .{
                         .user_data = server_data,
-                        .exception_context = null,
                     },
                 },
                 .data = .{
@@ -235,7 +234,6 @@ fn check_send_operation_result(data: *const CallbackManager.CallbackData) !void 
                     .cleanup = &cleanup_server_query_data,
                     .data = .{
                         .user_data = server_data,
-                        .exception_context = null,
                     },
                 },
                 .data = server_data.payload[data_sent..payload_len],
@@ -633,7 +631,6 @@ pub fn queue(
                     .cleanup = &cleanup_server_query_data,
                     .data = .{
                         .user_data = server_data,
-                        .exception_context = null,
                     },
                 },
                 .timeout = DEFAULT_TIMEOUT,

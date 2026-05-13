@@ -110,12 +110,8 @@ inline fn z_loop_call_soon(
         .cleanup = &Handle.release_python_generic_callback,
         .data = .{
             .user_data = py_handle,
-            .exception_context = .{
-                .callback_ptr = py_callback,
-                .module_name = Handle.ModuleName,
-                .exc_message = Handle.ExceptionMessage,
-                .module_ptr = @ptrCast(py_handle)
-            }
+            .module_ptr = null,
+            .callback_ptr = py_callback,
         }
         // .PythonGeneric = .{
         //     .args = callback_info,
@@ -246,12 +242,8 @@ inline fn z_loop_delayed_call(
         .cleanup = &Handle.release_python_generic_callback,
         .data = .{
             .user_data = py_timer_handle,
-            .exception_context = .{
-                .module_ptr = @ptrCast(py_timer_handle),
-                .exc_message = Handle.ExceptionMessage,
-                .module_name = Handle.ModuleName,
-                .callback_ptr = @ptrCast(py_timer_handle)
-            }
+            .module_ptr = @ptrCast(py_timer_handle),
+            .callback_ptr = null,
         }
         // .PythonGeneric = .{
         //     .args = callback_info,

@@ -51,7 +51,7 @@ fn ensure_inotify(self: *FSWatcher) !void {
             .callback = .{
                 .func = &on_inotify_event,
                 .cleanup = null,
-                .data = .{ .user_data = self, .exception_context = null },
+                .data = .{ .user_data = self },
             },
         }
     });
@@ -96,7 +96,7 @@ fn on_inotify_event(data: *const CallbackManager.CallbackData) !void {
             .callback = .{
                 .func = &on_inotify_event,
                 .cleanup = null,
-                .data = .{ .user_data = self, .exception_context = null },
+                .data = .{ .user_data = self },
             },
         }
     });

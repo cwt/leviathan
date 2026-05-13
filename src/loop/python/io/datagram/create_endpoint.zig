@@ -99,7 +99,7 @@ inline fn z_loop_create_datagram_endpoint(
     const callback = CallbackManager.Callback{
         .func = &resolve_local_addr,
         .cleanup = null,
-        .data = .{ .user_data = dcd, .exception_context = null },
+        .data = .{ .user_data = dcd },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
 
@@ -130,7 +130,7 @@ fn resolve_local_addr(data: *const CallbackManager.CallbackData) !void {
         const resolver_callback = CallbackManager.Callback{
             .func = &local_addr_resolved_callback,
             .cleanup = null,
-            .data = .{ .user_data = dcd, .exception_context = null },
+            .data = .{ .user_data = dcd },
         };
         const addresses = try loop_data.dns.lookup(addr_info.host, &resolver_callback) orelse return;
         dcd.local_addresses = try loop_data.allocator.dupe(std.net.Address, addresses);
@@ -141,7 +141,7 @@ fn resolve_local_addr(data: *const CallbackManager.CallbackData) !void {
     const callback = CallbackManager.Callback{
         .func = &resolve_remote_addr,
         .cleanup = null,
-        .data = .{ .user_data = dcd, .exception_context = null },
+        .data = .{ .user_data = dcd },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
 }
@@ -159,7 +159,7 @@ fn local_addr_resolved_callback(data: *const CallbackManager.CallbackData) !void
     const callback = CallbackManager.Callback{
         .func = &resolve_remote_addr,
         .cleanup = null,
-        .data = .{ .user_data = dcd, .exception_context = null },
+        .data = .{ .user_data = dcd },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
 }
@@ -175,7 +175,7 @@ fn resolve_remote_addr(data: *const CallbackManager.CallbackData) !void {
         const resolver_callback = CallbackManager.Callback{
             .func = &remote_addr_resolved_callback,
             .cleanup = null,
-            .data = .{ .user_data = dcd, .exception_context = null },
+            .data = .{ .user_data = dcd },
         };
         const addresses = try loop_data.dns.lookup(addr_info.host, &resolver_callback) orelse return;
         dcd.remote_addresses = try loop_data.allocator.dupe(std.net.Address, addresses);
@@ -185,7 +185,7 @@ fn resolve_remote_addr(data: *const CallbackManager.CallbackData) !void {
     const callback = CallbackManager.Callback{
         .func = &create_endpoint,
         .cleanup = null,
-        .data = .{ .user_data = dcd, .exception_context = null },
+        .data = .{ .user_data = dcd },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
 }
@@ -203,7 +203,7 @@ fn remote_addr_resolved_callback(data: *const CallbackManager.CallbackData) !voi
     const callback = CallbackManager.Callback{
         .func = &create_endpoint,
         .cleanup = null,
-        .data = .{ .user_data = dcd, .exception_context = null },
+        .data = .{ .user_data = dcd },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
 }

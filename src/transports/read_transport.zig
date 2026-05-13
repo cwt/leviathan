@@ -178,12 +178,8 @@ pub inline fn perform(self: *ReadTransport, buffer: ?[]u8) !void {
                     .cleanup = &cleanup_resources_callback,
                     .data = .{
                         .user_data = self,
-                        .exception_context = .{
-                            .callback_ptr = null,
-                            .exc_message = ExceptionMessage,
-                            .module_name = ModuleName,
-                            .module_ptr = self.parent_transport
-                        }
+                        .module_ptr = null,
+            .callback_ptr = null,
                     }
                 },
                 .fd = self.fd,

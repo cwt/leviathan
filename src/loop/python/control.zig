@@ -189,7 +189,7 @@ fn z_loop_add_hook(self: *LoopObject, args: []const ?PyObject) !PyObject {
     handle.node = try handle.loop_data.add_hook(hook_type, .{
         .func = &hook_callback,
         .cleanup = null,
-        .data = .{ .user_data = handle, .exception_context = null },
+        .data = .{ .user_data = handle },
     });
 
     return @ptrCast(handle);

@@ -86,12 +86,8 @@ inline fn z_future_add_done_callback(
                 .cleanup = &Handle.release_python_generic_callback,
                 .data = .{
                     .user_data = handle,
-                    .exception_context = .{
-                        .callback_ptr = py_callback,
-                        .module_name = Handle.ModuleName,
-                        .exc_message = Handle.ExceptionMessage,
-                        .module_ptr = @ptrCast(handle)
-                    }
+                    .module_ptr = null,
+            .callback_ptr = py_callback,
                 }
             };
             try Loop.Scheduling.Soon.dispatch(future_data.loop, &callback);

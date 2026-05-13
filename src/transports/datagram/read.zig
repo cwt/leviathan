@@ -47,7 +47,7 @@ pub fn queue_read(self: *DatagramTransport.DatagramTransportObject) !void {
             .callback = .{
                 .func = &read_completed,
                 .cleanup = &cleanup_read,
-                .data = .{ .user_data = rd, .exception_context = null },
+                .data = .{ .user_data = rd },
             },
             .flags = 0,
         },

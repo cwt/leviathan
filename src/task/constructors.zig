@@ -49,12 +49,8 @@ inline fn task_schedule_coro(self: *PythonTaskObject, loop: *LoopObject) !void {
         .cleanup = &callbacks.cleanup_task,
         .data = .{
             .user_data = self,
-            .exception_context = .{
-                .callback_ptr = self.coro.?,
-                .exc_message = Task.ExceptionMessage,
-                .module_name = Task.ModuleName,
-                .module_ptr = @ptrCast(self)
-            }
+            .module_ptr = null,
+            .callback_ptr = self.coro.?,
         }
     };
 

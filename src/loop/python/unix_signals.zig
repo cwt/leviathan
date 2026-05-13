@@ -76,12 +76,8 @@ inline fn z_loop_add_signal_handler(
         .cleanup = &Handle.release_python_generic_callback,
         .data = .{
             .user_data = py_handle,
-            .exception_context = .{
-                .callback_ptr = py_callback,
-                .module_name = Handle.ModuleName,
-                .exc_message = Handle.ExceptionMessage,
-                .module_ptr = @ptrCast(py_handle)
-            }
+            .module_ptr = null,
+            .callback_ptr = py_callback,
         }
     });
 

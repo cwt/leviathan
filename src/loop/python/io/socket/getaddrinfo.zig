@@ -160,7 +160,7 @@ inline fn z_loop_getaddrinfo(self: *LoopObject, args: []const ?PyObject, knames:
     const callback = CallbackManager.Callback{
         .func = &getaddrinfo_callback,
         .cleanup = null,
-        .data = .{ .user_data = gaid, .exception_context = null },
+        .data = .{ .user_data = gaid },
     };
     
     const address_list = try loop_data.dns.lookup(host_str, &callback);

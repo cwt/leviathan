@@ -157,7 +157,7 @@ inline fn z_loop_create_unix_connection(
                 .callback = .{
                     .func = &unix_connect_callback,
                     .cleanup = null,
-                    .data = .{ .user_data = ucd, .exception_context = null },
+                    .data = .{ .user_data = ucd },
                 },
             },
         }

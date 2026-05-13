@@ -85,12 +85,8 @@ fn create_new_py_exception_and_add_event(
         .cleanup = &cleanup_task,
         .data = .{
             .user_data = task,
-            .exception_context = .{
-                .callback_ptr = task.coro.?,
-                .exc_message = Task.ExceptionMessage,
-                .module_name = Task.ModuleName,
-                .module_ptr = @ptrCast(task)
-            }
+            .module_ptr = null,
+            .callback_ptr = task.coro.?,
         }
     };
 
@@ -255,12 +251,8 @@ inline fn successfully_execution(
             .cleanup = &cleanup_task,
             .data = .{
                 .user_data = task,
-                .exception_context = .{
-                    .callback_ptr = task.coro.?,
-                    .exc_message = Task.ExceptionMessage,
-                    .module_name = Task.ModuleName,
-                    .module_ptr = @ptrCast(task)
-                }
+                .module_ptr = null,
+            .callback_ptr = task.coro.?,
             }
         };
 

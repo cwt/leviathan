@@ -145,7 +145,7 @@ fn z_loop_sock_accept(self: *LoopObject, args: []const ?PyObject) !*FutureObject
             .callback = .{
                 .func = &sock_accept_callback,
                 .cleanup = null,
-                .data = .{ .user_data = ad, .exception_context = null },
+                .data = .{ .user_data = ad },
             },
         }
     });
@@ -244,7 +244,7 @@ fn z_loop_sock_connect(self: *LoopObject, args: []const ?PyObject) !*FutureObjec
             .callback = .{
                 .func = &sock_connect_callback,
                 .cleanup = null,
-                .data = .{ .user_data = scd, .exception_context = null },
+                .data = .{ .user_data = scd },
             },
         }
     });
@@ -345,7 +345,7 @@ fn z_loop_sock_recv(self: *LoopObject, args: []const ?PyObject) !*FutureObject {
             .callback = .{
                 .func = &sock_recv_callback,
                 .cleanup = null,
-                .data = .{ .user_data = rd, .exception_context = null },
+                .data = .{ .user_data = rd },
             },
         }
     });
@@ -411,7 +411,7 @@ sd.future, future_data, exc);
                 .callback = .{
                     .func = &sock_sendall_callback,
                     .cleanup = null,
-                    .data = .{ .user_data = sd, .exception_context = null },
+                    .data = .{ .user_data = sd },
                 },
             }
         });
@@ -486,7 +486,7 @@ fn z_loop_sock_sendall(self: *LoopObject, args: []const ?PyObject) !*FutureObjec
             .callback = .{
                 .func = &sock_sendall_callback,
                 .cleanup = null,
-                .data = .{ .user_data = sd, .exception_context = null },
+                .data = .{ .user_data = sd },
             },
         }
     });
@@ -607,7 +607,7 @@ fn z_loop_sock_recvfrom(self: *LoopObject, args: []const ?PyObject) !*FutureObje
             .callback = .{
                 .func = &sock_recvfrom_callback,
                 .cleanup = null,
-                .data = .{ .user_data = rd, .exception_context = null },
+                .data = .{ .user_data = rd },
             },
         }
     });
@@ -733,7 +733,7 @@ fn z_loop_sock_sendto(self: *LoopObject, args: []const ?PyObject) !*FutureObject
             .callback = .{
                 .func = &sock_sendto_callback,
                 .cleanup = null,
-                .data = .{ .user_data = sd, .exception_context = null },
+                .data = .{ .user_data = sd },
             },
         }
     });
@@ -835,7 +835,7 @@ fn z_loop_sock_recv_into(self: *LoopObject, args: []const ?PyObject) !*FutureObj
             .callback = .{
                 .func = &sock_recv_into_callback_with_buf,
                 .cleanup = null,
-                .data = .{ .user_data = rd, .exception_context = null },
+                .data = .{ .user_data = rd },
             },
         }
     });

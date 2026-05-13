@@ -126,7 +126,6 @@ inline fn z_loop_create_server(
         .cleanup = null,
         .data = .{
             .user_data = creation_data_ptr,
-            .exception_context = null,
         },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
@@ -161,7 +160,6 @@ fn z_try_resolve_server_host(creation_data: *ServerCreationData) !void {
             .cleanup = null,
             .data = .{
                 .user_data = server_data,
-                .exception_context = null,
             },
         };
         try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
@@ -173,7 +171,6 @@ fn z_try_resolve_server_host(creation_data: *ServerCreationData) !void {
         .cleanup = null,
         .data = .{
             .user_data = server_data,
-            .exception_context = null,
         },
     };
     const address_list = try loop_data.dns.lookup(hostname, &resolver_callback) orelse return;
@@ -186,7 +183,6 @@ fn z_try_resolve_server_host(creation_data: *ServerCreationData) !void {
         .cleanup = null,
         .data = .{
             .user_data = server_data,
-            .exception_context = null,
         },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
@@ -233,7 +229,6 @@ fn z_server_host_resolved_callback(server_data: *ServerSocketData) !void {
         .cleanup = null,
         .data = .{
             .user_data = server_data,
-            .exception_context = null,
         },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);

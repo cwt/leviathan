@@ -66,7 +66,6 @@ fn signal_handler(data: *const CallbackManager.CallbackData) !void {
                 .func = &signal_handler,
                 .cleanup = null,
                 .data = .{
-                    .exception_context = null,
                     .user_data = loop,
                 },
                 },
@@ -107,7 +106,6 @@ fn enqueue_signal_fd(self: *UnixSignals) !void {
                 .func = &signal_handler,
                 .cleanup = null,
                 .data = .{
-                    .exception_context = null,
                     .user_data = loop,
                 },
             },
@@ -151,8 +149,7 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
             .func = &default_sigint_signal_callback,
             .cleanup = null,
             .data = .{
-                .user_data = self.loop,
-                .exception_context = null
+                .user_data = self.loop
             }
         },
         else => {
@@ -193,8 +190,7 @@ pub fn init(loop: *Loop) !void {
         .func = &default_sigint_signal_callback,
         .cleanup = null,
         .data = .{
-            .user_data = loop,
-            .exception_context = null
+            .user_data = loop
         }
     });
 }

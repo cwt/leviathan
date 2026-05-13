@@ -241,12 +241,8 @@ pub fn call_done_callbacks(self: *Future, new_status: Future.FutureStatus) !void
         .cleanup = &release_python_future_data,
         .data = .{
             .user_data = self,
-            .exception_context = .{
-                .callback_ptr = null,
-                .exc_message = ExceptionMessage,
-                .module_name = ModuleName,
-                .module_ptr = @ptrCast(pyfut)
-            }
+            .module_ptr = null,
+            .callback_ptr = null,
         }
     };
 

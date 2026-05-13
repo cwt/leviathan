@@ -188,7 +188,6 @@ inline fn z_loop_create_connection(
             .cleanup = null,
             .data = .{
                 .user_data = transport_creation_data,
-                .exception_context = null,
             },
         };
         try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
@@ -210,7 +209,6 @@ inline fn z_loop_create_connection(
         .cleanup = null,
         .data = .{
             .user_data = creation_data_ptr,
-            .exception_context = null,
         },
     };
     try Loop.Scheduling.Soon.dispatch(loop_data, &callback);
@@ -307,7 +305,6 @@ fn z_try_resolv_host(creation_data: *SocketCreationData) !void {
         .cleanup = null,
         .data = .{
             .user_data = connection_data,
-            .exception_context = null,
             .traverse = &SocketConnectionData.traverse,
         },
     };
@@ -321,7 +318,6 @@ fn z_try_resolv_host(creation_data: *SocketCreationData) !void {
         .cleanup = null,
         .data = .{
             .user_data = connection_data,
-            .exception_context = null,
             .traverse = &SocketConnectionData.traverse,
         },
     };
@@ -362,7 +358,6 @@ fn z_host_resolved_callback(connection_data: *SocketConnectionData) !void {
         .cleanup = null,
         .data = .{
             .user_data = connection_data,
-            .exception_context = null,
             .traverse = &SocketConnectionData.traverse,
         },
     };
@@ -514,7 +509,6 @@ fn create_socket_and_submit_connect_req(address: *const std.net.Address, data: *
                     .cleanup = null,
                     .data = .{
                         .user_data = data,
-                        .exception_context = null,
                         .traverse = &SocketData.traverse,
                     },
                 },
@@ -638,7 +632,6 @@ fn z_create_socket_connection(data: *SocketConnectionData, connection_submitted:
             .cleanup = null,
             .data = .{
                 .user_data = mcs,
-                .exception_context = null,
             },
         };
         const seconds: u64 = @intFromFloat(@floor(delay));
