@@ -403,6 +403,11 @@ pub fn execute_dynamic_ring_buffer(
 
         const start_time = if (debug_state != null) std.time.nanoTimestamp() else 0;
 
+        // Consume BEFORE calling callback: if the callback frees user_data
+        // and triggers GC, the ring buffer slot is already marked consumed
+        // so GC traversal won't access dangling pointers.
+        ring.consume();
+
         callback.func(&callback.data) catch |err| {
             if (err == error.PythonError) {
                 if (python_c.PyErr_Occurred()) |exc| {
@@ -417,7 +422,6 @@ pub fn execute_dynamic_ring_buffer(
                 if (callback.cleanup) |cleanup| {
                     cleanup(callback.data.user_data);
                 }
-                ring.consume();
                 callbacks_executed += 1;
             }
 
@@ -442,7 +446,6 @@ pub fn execute_dynamic_ring_buffer(
             }
         }
 
-        ring.consume();
         callbacks_executed += 1;
 
         yield_counter += 1;
