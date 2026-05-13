@@ -89,14 +89,13 @@ fn exception_handler(err: anyerror, data: ?*anyopaque, context: ?CallbackManager
 }
 
 pub inline fn call_once(
-    ready_queue: *CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity),
+    ready_queue: *CallbackManager.DynamicRingBuffer,
     _: usize,
     loop_obj: *Loop.Python.LoopObject
 ) !usize {
     const debug_state = CallbackManager.DebugState{ .slow_callback_duration = loop_obj.slow_callback_duration };
 
-    const callbacks_executed = try CallbackManager.execute_ring_buffer(
-        CallbackManager.ReadyTasksQueueCapacity,
+    const callbacks_executed = try CallbackManager.execute_dynamic_ring_buffer(
         ready_queue,
         if (builtin.is_test) null else &exception_handler,
         loop_obj,
@@ -121,7 +120,7 @@ fn execute_hooks(hooks: *Loop.HooksList) !void {
 fn fetch_completed_tasks(
     self: *Loop,
     blocking_ready_tasks: []std.os.linux.io_uring_cqe,
-    ready_queue: *CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity)
+    ready_queue: *CallbackManager.DynamicRingBuffer
 ) !void {
     for (blocking_ready_tasks) |cqe| {
         const user_data = cqe.user_data;
@@ -150,7 +149,7 @@ fn poll_blocking_events(
     self: *Loop,
     mutex: *lock.Mutex,
     wait: bool,
-    ready_queue: *CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity)
+    ready_queue: *CallbackManager.DynamicRingBuffer
 ) !void {
     const blocking_ready_tasks = self.io.blocking_ready_tasks;
 

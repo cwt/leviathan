@@ -46,7 +46,7 @@ idle_hooks: HooksList,
 ready_tasks_queue_max_capacity: usize,
 
 ready_tasks_queue_index: u8 = 0,
-ready_tasks_queues: *[2]CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity),
+ready_tasks_queues: *[2]CallbackManager.DynamicRingBuffer,
 reserved_slots: usize = 0,
 
 io: Scheduling.IO,
@@ -59,7 +59,7 @@ mutex: lock.Mutex,
 
 unix_signals: UnixSignals,
 
-pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) !void {
+pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_capacity: usize) !void {
     if (self.initialized) {
         python_c.raise_python_runtime_error("Loop is already initialized\x00");
         return error.PythonError;
@@ -71,10 +71,11 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
     var writer_watchers = try WatchersBTree.init(allocator);
     errdefer writer_watchers.deinit() catch {};
 
-    const queues = try allocator.create([2]CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity));
+    const queues = try allocator.create([2]CallbackManager.DynamicRingBuffer);
     errdefer allocator.destroy(queues);
-    queues[0].init();
-    queues[1].init();
+    try queues[0].init(allocator, rtq_capacity);
+    errdefer queues[0].deinit(allocator);
+    try queues[1].init(allocator, rtq_capacity);
 
     self.allocator = allocator;
     self.mutex = lock.init();
@@ -94,7 +95,7 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_max_capacity: usize) 
     self.running = false;
     self.stopping = false;
     self.initialized = true;
-    self.ready_tasks_queue_max_capacity = rtq_max_capacity / @sizeOf(CallbackManager.Callback);
+    self.ready_tasks_queue_max_capacity = rtq_capacity;
 
     try self.fs_watcher.init(self);
     try self.child_watcher.init(self);
@@ -125,8 +126,12 @@ pub fn release(self: *Loop) void {
     self.io.deinit();
     self.unix_signals.deinit();
 
+    // Release pending callbacks first, while IO is still functional.
     for (self.ready_tasks_queues) |*ready_tasks_queue| {
-        CallbackManager.release_ring_buffer(CallbackManager.ReadyTasksQueueCapacity, ready_tasks_queue);
+        CallbackManager.release_dynamic_ring_buffer(ready_tasks_queue);
+    }
+    for (self.ready_tasks_queues) |*q| {
+        q.deinit(self.allocator);
     }
     self.allocator.destroy(self.ready_tasks_queues);
 
@@ -147,7 +152,7 @@ pub fn release(self: *Loop) void {
 
 pub inline fn reserve_slots(self: *Loop, amount: usize) !void {
     const new_value = self.reserved_slots + amount;
-    if (new_value > CallbackManager.ReadyTasksQueueCapacity) {
+    if (new_value > self.ready_tasks_queues[0].capacity) {
         return error.Overflow;
     }
     self.reserved_slots = new_value;

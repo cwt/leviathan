@@ -181,15 +181,15 @@ inline fn z_loop_init(
     self: *LoopObject, args: ?PyObject, kwargs: ?PyObject
 ) !c_int {
     var kwlist: [3][*c]u8 = undefined;
-    kwlist[0] = @constCast("ready_tasks_queue_min_bytes_capacity\x00");
+    kwlist[0] = @constCast("ready_tasks_queue_capacity\x00");
     kwlist[1] = @constCast("exception_handler\x00");
     kwlist[2] = null;
 
-    var ready_tasks_queue_min_bytes_capacity: u64 = 0;
+    var ready_tasks_queue_capacity: u64 = 0;
     var exception_handler: ?PyObject = null;
 
     if (python_c.PyArg_ParseTupleAndKeywords(
-            args, kwargs, "KO\x00", @ptrCast(&kwlist), &ready_tasks_queue_min_bytes_capacity,
+            args, kwargs, "KO\x00", @ptrCast(&kwlist), &ready_tasks_queue_capacity,
             &exception_handler
     ) < 0) {
         return error.PythonError;
@@ -205,7 +205,7 @@ inline fn z_loop_init(
 
     const allocator = utils.gpa.allocator();
     const loop_data = utils.get_data_ptr(Loop, self);
-    try loop_data.init(allocator, @intCast(ready_tasks_queue_min_bytes_capacity));
+    try loop_data.init(allocator, @intCast(ready_tasks_queue_capacity));
 
     self.asyncio_tasks_set = python_c.PyObject_GetAttrString(@ptrCast(self), "_asyncio_tasks\x00");
     python_c.PyErr_Clear();

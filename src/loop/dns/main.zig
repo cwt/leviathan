@@ -274,10 +274,10 @@ test "DNS deinit cleanup" {
     loop.allocator = allocator;
     loop.mutex = @import("../../utils/lock.zig").init();
     
-    const queues = try allocator.create([2]CallbackManager.RingBuffer(CallbackManager.ReadyTasksQueueCapacity));
-    defer allocator.destroy(queues);
-    queues[0].init();
-    queues[1].init();
+    const queues = try allocator.create([2]CallbackManager.DynamicRingBuffer);
+    errdefer allocator.destroy(queues);
+    try queues[0].init(allocator, 1024);
+    try queues[1].init(allocator, 1024);
     loop.ready_tasks_queues = queues;
 
     loop.ready_tasks_queue_index = 0;
@@ -288,6 +288,10 @@ test "DNS deinit cleanup" {
     loop.dns.loop = loop;
     
     loop.dns.deinit();
+    for (loop.ready_tasks_queues) |*q| {
+        q.deinit(allocator);
+    }
+    allocator.destroy(loop.ready_tasks_queues);
 }
 
 test {
