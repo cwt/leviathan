@@ -170,6 +170,59 @@ Once the dispatch layer is O(1), the next bottleneck is io_uring submission/reap
 
 ---
 
+## 🔴 PRIORITY 10: Python/Zig Boundary Overhead Elimination (2026-05-13)
+
+### Root Cause of 0.2-0.4× Task Performance
+
+Task Spawn benchmark (zero I/O, pure `create_task()`) shows leviathan at **0.21-0.39×** asyncio. Every `asyncio.sleep(0)` costs **12 Python/Zig boundary crossings** — each one pushes/tears down a Python stack frame:
+
+```
+create_task → register_task (Python)  |  1 crossing
+execute_task_send → _enter_task       |  2
+execute_task_send → PyContext_Enter   |  3
+execute_task_send → PyIter_Send       |  4  (coro starts)
+  coro → loop.call_later              |  5  (coro sleeps)
+  coro suspends, yields Future
+execute_task_send → PyContext_Exit    |  6
+execute_task_send → _leave_task       |  7
+...timer fires...
+wakeup → PyIter_Send                  |  8  (coro resumes)
+  coro → _leave_task                  |  9
+```
+
+The same work in uvloop takes ~3 crossings because enter/leave/context are inline C, not Python callbacks.
+
+### Observation
+
+Three of these calls (`_register_task`, `_enter_task`, `_leave_task`) are just PySet operations on `loop._asyncio_tasks` — we can call `PySet_Add`/`PySet_Discard` directly from Zig. No Python frame needed.
+
+### Implementation Plan
+
+#### Phase 1: Eliminate _register_task / _enter_task / _leave_task Python calls
+
+| # | Task | Files | Status |
+|---|------|-------|:---:|
+| 10.1 | Cache `loop._asyncio_tasks` PySet pointer at loop init | `loop/main.zig`, `loop/python/constructors.zig` | 🔴 Pending |
+| 10.2 | Replace `PyObject_Vectorcall(_register_task)` with `PySet_Add` in `task_schedule_coro` | `task/constructors.zig` | 🔴 Pending |
+| 10.3 | Replace `PyObject_Vectorcall(_enter_task)` with `PySet_Add` in `_execute_task_send` / `_execute_task_throw` | `task/callbacks.zig` | 🔴 Pending |
+| 10.4 | Replace `PyObject_Vectorcall(_leave_task)` with `PySet_Discard` in `_execute_task_send` / `_execute_task_throw` / `_execute_task_throw` error path | `task/callbacks.zig` | 🔴 Pending |
+| 10.5 | Skip `PyContext_Enter`/`Exit` when context is default (no contextvars set) | `task/callbacks.zig` | 🔴 Pending |
+| 10.6 | Run full test suite + benchmarks, validate boundary crossing reduction | All | 🔴 Pending |
+
+**Expected impact:** 3-4 boundary crossings eliminated per task step. Task-intensive benchmarks (Event Fiesta, Producer-Consumer, Task Workflow, Task Spawn) should improve from 0.2-0.4× toward 0.5-0.7×. I/O benchmarks unaffected (already flat).
+
+#### Phase 2: Further boundary reductions (future)
+
+| # | Task | Status |
+|---|------|:---:|
+| 10.7 | Fuse `PyIter_Send` with enter/leave in a single Zig→Python trampoline | 🔴 Future |
+| 10.8 | Investigate `PyEval_SaveThread`/`PyEval_RestoreThread` overhead in callback dispatch loop | 🔴 Future |
+| 10.9 | Profile remaining boundary crossings with `perf` to find next bottleneck | 🔴 Future |
+
+---
+
+---
+
 ## ✅ Completed Next Steps
 
 1.  **`create_server` DNS** — ✅ Already implemented with async state machine (same callback pattern as `create_connection`). Added `host=None` support (binds to all interfaces: IPv4 + IPv6).
