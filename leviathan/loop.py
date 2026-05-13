@@ -85,7 +85,7 @@ class ExceptionContext(TypedDict):
 
 
 class Loop(_Loop):
-    def __init__(self, ready_tasks_queue_capacity: int = 524288) -> None:
+    def __init__(self, ready_tasks_queue_capacity: int = 1048576) -> None:
         self._asyncio_tasks = set()
         _Loop.__init__(
             self, ready_tasks_queue_capacity, self.call_exception_handler

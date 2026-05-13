@@ -289,7 +289,7 @@ test "DNS deinit cleanup" {
     
     loop.dns.deinit();
     for (loop.ready_tasks_queues) |*q| {
-        q.deinit(allocator);
+        q.deinit();
     }
     allocator.destroy(loop.ready_tasks_queues);
 }

@@ -74,7 +74,7 @@ pub fn init(self: *Loop, allocator: std.mem.Allocator, rtq_capacity: usize) !voi
     const queues = try allocator.create([2]CallbackManager.DynamicRingBuffer);
     errdefer allocator.destroy(queues);
     try queues[0].init(allocator, rtq_capacity);
-    errdefer queues[0].deinit(allocator);
+    errdefer queues[0].deinit();
     try queues[1].init(allocator, rtq_capacity);
 
     self.allocator = allocator;
@@ -131,7 +131,7 @@ pub fn release(self: *Loop) void {
         CallbackManager.release_dynamic_ring_buffer(ready_tasks_queue);
     }
     for (self.ready_tasks_queues) |*q| {
-        q.deinit(self.allocator);
+        q.deinit();
     }
     self.allocator.destroy(self.ready_tasks_queues);
 
@@ -151,11 +151,7 @@ pub fn release(self: *Loop) void {
 }
 
 pub inline fn reserve_slots(self: *Loop, amount: usize) !void {
-    const new_value = self.reserved_slots + amount;
-    if (new_value > self.ready_tasks_queues[0].capacity) {
-        return error.Overflow;
-    }
-    self.reserved_slots = new_value;
+    self.reserved_slots += amount;
 }
 
 pub const HookType = enum {

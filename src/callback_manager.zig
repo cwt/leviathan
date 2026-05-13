@@ -150,6 +150,7 @@ pub const DynamicRingBuffer = struct {
     capacity: usize,
     read_idx: usize,
     write_idx: usize,
+    allocator: std.mem.Allocator,
 
     pub fn init(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
         self.callbacks = try allocator.alloc(Callback, capacity);
@@ -159,11 +160,12 @@ pub const DynamicRingBuffer = struct {
         self.capacity = capacity;
         self.read_idx = 0;
         self.write_idx = 0;
+        self.allocator = allocator;
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        allocator.free(self.callbacks);
-        allocator.free(self.executed);
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.callbacks);
+        self.allocator.free(self.executed);
         self.* = undefined;
     }
 
@@ -177,6 +179,38 @@ pub const DynamicRingBuffer = struct {
 
     pub inline fn count(self: *const Self) usize {
         return @atomicLoad(usize, &self.write_idx, .acquire) - @atomicLoad(usize, &self.read_idx, .acquire);
+    }
+
+    fn grow(self: *Self) !void {
+        const old_cap = self.capacity;
+        const new_cap = @max(old_cap * 2, old_cap + 1);
+        const n = self.count();
+
+        const new_callbacks = try self.allocator.alloc(Callback, new_cap);
+        errdefer self.allocator.free(new_callbacks);
+        const new_executed = try self.allocator.alloc(bool, new_cap);
+        errdefer self.allocator.free(new_executed);
+
+        var i: usize = 0;
+        var idx = self.read_idx;
+        while (i < n) : ({
+            i += 1;
+            idx += 1;
+        }) {
+            const old_idx = idx % old_cap;
+            new_callbacks[i] = self.callbacks[old_idx];
+            new_executed[i] = false;
+        }
+        @memset(new_executed[n..new_cap], false);
+
+        self.allocator.free(self.callbacks);
+        self.allocator.free(self.executed);
+
+        self.callbacks = new_callbacks;
+        self.executed = new_executed;
+        self.capacity = new_cap;
+        self.read_idx = 0;
+        self.write_idx = n;
     }
 
     pub fn try_push(self: *Self, callback: Callback) bool {
@@ -195,6 +229,15 @@ pub const DynamicRingBuffer = struct {
     pub fn push(self: *Self, callback: Callback) void {
         if (!self.try_push(callback)) {
             @panic("RingBuffer overflow");
+        }
+    }
+
+    pub fn push_or_grow(self: *Self, callback: Callback) !void {
+        if (!self.try_push(callback)) {
+            try self.grow();
+            if (!self.try_push(callback)) {
+                @panic("RingBuffer overflow after grow");
+            }
         }
     }
 

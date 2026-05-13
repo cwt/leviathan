@@ -4,7 +4,7 @@ const CallbackManager = @import("callback_manager");
 
 pub inline fn dispatch_nonthreadsafe(self: *Loop, callback: *const CallbackManager.Callback) !void {
     const ready_queue = &self.ready_tasks_queues[self.ready_tasks_queue_index];
-    ready_queue.push(callback.*);
+    try ready_queue.push_or_grow(callback.*);
 
     if (self.io.ring_blocked) {
         try self.io.wakeup_eventfd();
@@ -24,7 +24,7 @@ pub inline fn dispatch_guaranteed_nonthreadsafe(self: *Loop, callback: *const Ca
 
     self.reserved_slots -= 1;
 
-    if (!ready_queue.try_push(callback.*)) return error.Overflow;
+    try ready_queue.push_or_grow(callback.*);
 }
 
 pub inline fn dispatch_guaranteed(self: *Loop, callback: *const CallbackManager.Callback) !void {
