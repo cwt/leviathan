@@ -29,8 +29,8 @@ pub fn init(self: *Future, loop: *Loop) !void {
     };
 
     self.callbacks_arena_allocator = self.callbacks_arena.allocator();
-    self.callbacks_queue = .{};
-    self.exceptions_queue = .{};
+    self.callbacks_queue = .{ .items = &.{}, .capacity = 0 };
+    self.exceptions_queue = .{ .items = &.{}, .capacity = 0 };
 }
 
 pub fn release(self: *Future) void {

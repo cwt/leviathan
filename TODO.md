@@ -1,8 +1,8 @@
 # Leviathan TODO
 
-## ✅ PRIORITY 1: Zig 0.15.2 Compatibility — DONE (2026-05-06)
+## ✅ PRIORITY 1: Zig 0.16.0 Compatibility — DONE (2026-05-14)
 
-Project now targets Zig 0.15.2 (was 0.14.0). Docs cached at `docs/zig-0.15.2/`.
+Project now targets Zig 0.16.0 (was 0.15.2).
 
 ### 1.1–1.10: Summary
 

@@ -57,7 +57,7 @@ fn getaddrinfo_callback(data: *const CallbackManager.CallbackData) !void {
     try Future.Python.Result.future_fast_set_result(future_data, py_tuple);
 }
 
-fn build_result_tuple(address_list: []const std.net.Address, port: u16, family_filter: i32, socket_type: i32, proto: i32) !PyObject {
+fn build_result_tuple(address_list: []const utils.Address, port: u16, family_filter: i32, socket_type: i32, proto: i32) !PyObject {
     var filtered_count: usize = 0;
     for (address_list) |addr| {
         if (family_filter != 0 and addr.any.family != family_filter) continue;
@@ -71,7 +71,7 @@ fn build_result_tuple(address_list: []const std.net.Address, port: u16, family_f
     for (address_list) |addr| {
         if (family_filter != 0 and addr.any.family != family_filter) continue;
 
-        const sockaddr = try utils.Address.to_py_addr_with_port(addr, port);
+        const sockaddr = try utils.Address.toPyAddrWithPort(addr, port);
         defer python_c.py_decref(sockaddr);
 
         const py_family = python_c.PyLong_FromLong(addr.any.family) orelse return error.PythonError;

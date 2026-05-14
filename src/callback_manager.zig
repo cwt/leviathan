@@ -8,6 +8,12 @@ const utils = @import("utils");
 
 pub const ExceptionHandler = *const fn (anyerror, ?*anyopaque, ?*python_c.PyObject, ?PyObject) anyerror!void;
 
+pub inline fn nanoTime() u64 {
+    var ts: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
+}
+
 pub const DebugState = struct {
     slow_callback_duration: f64,
 };
@@ -315,7 +321,7 @@ pub fn execute_ring_buffer(
             }
         }
 
-        const start_time = if (debug_state != null) std.time.nanoTimestamp() else 0;
+        const start_time = if (debug_state != null) nanoTime() else 0;
 
         callback.func(&callback.data) catch |err| {
             // Check for fatal exceptions BEFORE calling the handler
@@ -344,7 +350,7 @@ pub fn execute_ring_buffer(
         };
 
         if (debug_state) |ds| {
-            const end_time = std.time.nanoTimestamp();
+            const end_time = nanoTime();
             const duration = @as(f64, @floatFromInt(end_time - start_time)) / 1e9;
             if (duration >= ds.slow_callback_duration) {
                 if (warning_handler) |wh| {
@@ -402,7 +408,7 @@ pub fn execute_dynamic_ring_buffer(
             }
         }
 
-        const start_time = if (debug_state != null) std.time.nanoTimestamp() else 0;
+        const start_time = if (debug_state != null) nanoTime() else 0;
 
         // Consume BEFORE calling callback: if the callback frees user_data
         // and triggers GC, the ring buffer slot is already marked consumed
@@ -434,7 +440,7 @@ pub fn execute_dynamic_ring_buffer(
         };
 
         if (debug_state) |ds| {
-            const end_time = std.time.nanoTimestamp();
+            const end_time = nanoTime();
             const duration = @as(f64, @floatFromInt(end_time - start_time)) / 1e9;
             if (duration >= ds.slow_callback_duration) {
                 if (warning_handler) |wh| {

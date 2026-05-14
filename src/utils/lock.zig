@@ -1,23 +1,36 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const SpinMutex = struct {
+    inner: std.atomic.Mutex = .unlocked,
+
+    pub fn tryLock(m: *SpinMutex) bool {
+        return m.inner.tryLock();
+    }
+
+    pub fn lock(m: *SpinMutex) void {
+        while (!m.inner.tryLock()) {}
+    }
+
+    pub fn unlock(m: *SpinMutex) void {
+        m.inner.unlock();
+    }
+};
+
 const DummyLock = struct {
-    pub inline fn tryLock(_: *DummyLock) bool {
+    pub fn tryLock(_: *DummyLock) bool {
         return true;
     }
 
-    pub inline fn lock(_: *DummyLock) void {}
-    pub inline fn unlock(_: *DummyLock) void {}
+    pub fn lock(_: *DummyLock) void {}
+    pub fn unlock(_: *DummyLock) void {}
 };
 
 pub const Mutex = switch (builtin.mode) {
-    .Debug => std.Thread.Mutex,
-    else => if (builtin.single_threaded) DummyLock else std.Thread.Mutex,
+    .Debug => SpinMutex,
+    else => if (builtin.single_threaded) DummyLock else SpinMutex,
 };
 
 pub inline fn init() Mutex {
-    return switch (builtin.mode) {
-        .Debug => std.Thread.Mutex{},
-        else => if (builtin.single_threaded) DummyLock{} else std.Thread.Mutex{},
-    };
+    return .{};
 }

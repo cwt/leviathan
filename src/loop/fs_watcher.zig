@@ -10,7 +10,7 @@ const FSWatcher = @This();
 loop: *Loop = undefined,
 inotify_fd: std.posix.fd_t = -1,
 inotify_task_id: usize = 0,
-watchers: std.ArrayListUnmanaged(*Watcher) = .{},
+watchers: std.ArrayListUnmanaged(*Watcher) = .{ .items = &.{}, .capacity = 0 },
 
 pub const Watcher = struct {
     callback: PyObject,
@@ -20,7 +20,7 @@ pub const Watcher = struct {
 
 pub fn init(self: *FSWatcher, loop: *Loop) !void {
     self.loop = loop;
-    self.watchers = .{};
+    self.watchers = .{ .items = &.{}, .capacity = 0 };
     self.inotify_fd = -1;
     self.inotify_task_id = 0;
 }
@@ -42,7 +42,9 @@ pub fn deinit(self: *FSWatcher) void {
 fn ensure_inotify(self: *FSWatcher) !void {
     if (self.inotify_fd >= 0) return;
     
-    const fd = try std.posix.inotify_init1(std.os.linux.IN.NONBLOCK | std.os.linux.IN.CLOEXEC);
+    const ret = std.os.linux.inotify_init1(std.os.linux.IN.NONBLOCK | std.os.linux.IN.CLOEXEC);
+    if (@as(i32, @intCast(ret)) < 0) return error.SystemResources;
+    const fd: std.posix.fd_t = @intCast(ret);
     errdefer _ = std.os.linux.close(fd);
     
     self.inotify_task_id = try self.loop.io.queue(.{
@@ -125,7 +127,9 @@ fn dispatch_event(self: *FSWatcher, watcher: *Watcher, mask: u32, cookie: u32, n
 pub fn add_watch(self: *FSWatcher, path: [:0]const u8, mask: u32, callback: PyObject) !i32 {
     try self.ensure_inotify();
     
-    const wd = try std.posix.inotify_add_watch(self.inotify_fd, path, mask);
+    const wd_ret = std.os.linux.inotify_add_watch(self.inotify_fd, path, mask);
+    if (@as(i32, @intCast(wd_ret)) < 0) return error.SystemResources;
+    const wd: i32 = @intCast(wd_ret);
     
     const watcher = try self.loop.allocator.create(Watcher);
     errdefer self.loop.allocator.destroy(watcher);

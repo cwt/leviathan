@@ -70,7 +70,7 @@ fn subprocess_terminate(self: ?*SubprocessTransportObject, _: ?PyObject) callcon
 fn subprocess_send_signal(self: ?*SubprocessTransportObject, arg: ?PyObject) callconv(.c) ?PyObject {
     const instance = self.?;
     const sig = python_c.PyLong_AsInt(arg.?) ;
-    std.posix.kill(instance.pid, @intCast(sig)) catch |err| {
+    std.posix.kill(instance.pid, @as(std.os.linux.SIG, @enumFromInt(sig))) catch |err| {
         return utils.handle_zig_function_error(err, null);
     };
     return python_c.get_py_none();
@@ -237,7 +237,7 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
     const rc: c_int = if (std.posix.W.IFEXITED(@intCast(status)))
         @intCast(std.posix.W.EXITSTATUS(@intCast(status)))
     else if (std.posix.W.IFSIGNALED(@intCast(status)))
-        -@as(c_int, @intCast(std.posix.W.TERMSIG(@intCast(status))))
+        -@as(c_int, @intCast(@intFromEnum(std.posix.W.TERMSIG(@intCast(status)))))
     else
         0;
 

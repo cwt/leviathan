@@ -63,7 +63,7 @@ ad.future, future_data, exc);
     const client_fd: std.posix.fd_t = @intCast(data.io_uring_res);
     
     // Convert addr to Python tuple
-    const py_addr = try AddressUtils.to_py_addr(std.net.Address.initPosix(@ptrCast(&ad.addr)));
+    const py_addr = try AddressUtils.toPyAddr(utils.Address.initPosix(@ptrCast(&ad.addr)));
     defer python_c.py_decref(py_addr);
     
     const py_client_fd = python_c.PyLong_FromLong(client_fd) orelse return error.PythonError;
@@ -161,7 +161,7 @@ const SockConnectData = struct {
     future: *FutureObject,
     loop: *LoopObject,
     allocator: std.mem.Allocator,
-    addr: std.net.Address,
+    addr: utils.Address,
 };
 
 fn sock_connect_callback(data: *const CallbackManager.CallbackData) !void {
@@ -221,7 +221,7 @@ fn z_loop_sock_connect(self: *LoopObject, args: []const ?PyObject) !*FutureObjec
     defer python_c.py_decref(py_family);
     const family: i32 = @intCast(python_c.PyLong_AsLong(py_family));
 
-    const addr = try AddressUtils.from_py_addr(py_addr, family);
+    const addr = try AddressUtils.fromPyAddr(py_addr, family);
 
     const loop_data = utils.get_data_ptr(Loop, self);
     const fut = try Future.Python.Constructors.fast_new_future(self);
@@ -538,7 +538,7 @@ rd.future, future_data, exc);
     const py_data = python_c.PyBytes_FromStringAndSize(rd.buf.ptr, @intCast(nread)) orelse return error.PythonError;
     defer python_c.py_decref(py_data);
     
-    const py_addr = try AddressUtils.to_py_addr(std.net.Address.initPosix(@ptrCast(&rd.addr)));
+    const py_addr = try AddressUtils.toPyAddr(utils.Address.initPosix(@ptrCast(&rd.addr)));
     defer python_c.py_decref(py_addr);
 
     const result_tuple = python_c.PyTuple_Pack(2, py_data, py_addr) orelse return error.PythonError;
@@ -626,7 +626,7 @@ const SockSendToData = struct {
     buf: []u8,
     msg: std.posix.msghdr_const = undefined,
     iov: std.posix.iovec_const = undefined,
-    addr: std.net.Address,
+    addr: utils.Address,
 };
 
 fn sock_sendto_callback(data: *const CallbackManager.CallbackData) !void {
@@ -688,7 +688,7 @@ fn z_loop_sock_sendto(self: *LoopObject, args: []const ?PyObject) !*FutureObject
     defer python_c.py_decref(py_family);
     const family: i32 = @intCast(python_c.PyLong_AsLong(py_family));
 
-    const addr = try AddressUtils.from_py_addr(py_addr, family);
+    const addr = try AddressUtils.fromPyAddr(py_addr, family);
 
     var pbuf: python_c.Py_buffer = undefined;
     if (python_c.PyObject_GetBuffer(py_data, &pbuf, python_c.PyBUF_SIMPLE) < 0) {

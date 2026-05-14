@@ -29,7 +29,7 @@ pub const StreamServerObject = extern struct {
         python_c.py_xdecref(self.protocol_factory);
         python_c.py_xdecref(self.server_ref);
         if (self.server_fd >= 0) {
-            std.posix.close(self.server_fd);
+            _ = std.os.linux.close(self.server_fd);
             self.server_fd = -1;
         }
     }
@@ -139,17 +139,18 @@ fn accept_callback(data: *const CallbackManager.CallbackData) !void {
         return error.PythonError;
     }
 
-    const client_fd = std.posix.accept(
-        server.server_fd, null, null, std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC
-    ) catch |err| {
-        if (err == error.WouldBlock) {
+    const client_fd_ret = std.os.linux.accept4(server.server_fd, null, null, @as(u32, @intCast(std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC)));
+    const client_fd_signed = @as(i32, @intCast(client_fd_ret));
+    if (client_fd_signed < 0) {
+        if (client_fd_signed == -@as(i32, @intFromEnum(std.os.linux.E.AGAIN))) {
             // Re-arm poll
             try enqueue_accept(server);
             return;
         }
-        return err;
-    };
-    errdefer std.posix.close(client_fd);
+        return error.SystemResources;
+    }
+    const client_fd: std.posix.fd_t = @intCast(client_fd_ret);
+    errdefer _ = std.os.linux.close(client_fd);
 
     const loop = server.loop.?;
     _ = utils.get_data_ptr(Loop, @as(*Loop.Python.LoopObject, @ptrCast(loop)));
@@ -216,7 +217,7 @@ fn z_close_server(self: *StreamServerObject) !void {
         self.blocking_task_id = 0;
     }
     if (self.server_fd >= 0) {
-        std.posix.close(self.server_fd);
+        _ = std.os.linux.close(self.server_fd);
         self.server_fd = -1;
     }
 }

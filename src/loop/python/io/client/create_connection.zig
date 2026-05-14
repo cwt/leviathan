@@ -236,8 +236,8 @@ const SocketConnectionMethod = union(enum) {
 
 const SocketConnectionData = struct {
     creation_data: *SocketCreationData,
-    address_list: ?[]std.net.Address,
-    local_addr_list: ?[]std.net.Address,
+    address_list: ?[]utils.Address,
+    local_addr_list: ?[]utils.Address,
     method: SocketConnectionMethod,
 
     comptime {
@@ -310,7 +310,7 @@ fn z_try_resolv_host(creation_data: *SocketCreationData) !void {
     };
     const address_list = try loop_data.dns.lookup(hostname, &resolver_callback) orelse return;
 
-    connection_data.address_list = try allocator.dupe(std.net.Address, address_list);
+    connection_data.address_list = try allocator.dupe(utils.Address, address_list);
     errdefer allocator.free(connection_data.address_list.?);
 
     const callback = CallbackManager.Callback{
@@ -352,7 +352,7 @@ fn z_host_resolved_callback(connection_data: *SocketConnectionData) !void {
         return set_future_exception(error.PythonError, creation_data.future.?);
     };
 
-    connection_data.address_list = try allocator.dupe(std.net.Address, address_list);
+    connection_data.address_list = try allocator.dupe(utils.Address, address_list);
     const callback = CallbackManager.Callback{
         .func = &create_socket_connection,
         .cleanup = null,
@@ -384,8 +384,8 @@ fn host_resolved_callback(data: *const CallbackManager.CallbackData) !void {
 // -----------------------------------------------------------------
 // STEP#3: Create socket and submit connect events
 
-fn interleave_address_list(allocator: std.mem.Allocator, address_list: []std.net.Address, interleave: usize) !void {
-    const tmp_list = try allocator.alloc(std.net.Address, address_list.len * 2);
+fn interleave_address_list(allocator: std.mem.Allocator, address_list: []utils.Address, interleave: usize) !void {
+    const tmp_list = try allocator.alloc(utils.Address, address_list.len * 2);
     defer allocator.free(tmp_list);
 
     var ipv4_addresses: usize = 0;
@@ -443,7 +443,7 @@ const MultiConnectState = struct {
             .pending = 0,
             .succeeded = false,
             .failed_count = 0,
-            .task_ids = .{},
+            .task_ids = .{ .items = &.{}, .capacity = 0 },
             .all_errors = all_errors,
         };
         if (all_errors) {
@@ -490,10 +490,12 @@ const MultiConnectState = struct {
     }
 };
 
-fn create_socket_and_submit_connect_req(address: *const std.net.Address, data: *SocketData, loop: *Loop) !usize {
+fn create_socket_and_submit_connect_req(address: *const utils.Address, data: *SocketData, loop: *Loop) !usize {
     const flags = std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC;
-    const socket_fd = try std.posix.socket(address.any.family, flags, std.posix.IPPROTO.TCP);
-    errdefer std.posix.close(socket_fd);
+    const socket_ret = std.os.linux.socket(address.any.family, flags, std.os.linux.IPPROTO.TCP);
+    if (@as(i32, @intCast(socket_ret)) < 0) return error.SystemResources;
+    const socket_fd: std.posix.fd_t = @intCast(socket_ret);
+    errdefer _ = std.os.linux.close(socket_fd);
 
     data.socket_fd = socket_fd;
     errdefer data.socket_fd = -1;
@@ -520,7 +522,7 @@ fn create_socket_and_submit_connect_req(address: *const std.net.Address, data: *
 }
 
 fn submit_connect_for_address(
-    mcs: *MultiConnectState, address: *const std.net.Address, allocator: std.mem.Allocator, loop: *Loop
+    mcs: *MultiConnectState, address: *const utils.Address, allocator: std.mem.Allocator, loop: *Loop
 ) !void {
     const socket_data = try allocator.create(SocketData);
     errdefer allocator.destroy(socket_data);
@@ -710,7 +712,7 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
     mcs.pending -= 1;
 
     if (mcs.succeeded or data.cancelled) {
-        if (fd >= 0) std.posix.close(fd);
+        if (fd >= 0) _ = std.os.linux.close(fd);
         if (mcs.pending == 0) mcs.deinit();
         return;
     }
@@ -731,7 +733,7 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
         }
 
         mcs.failed_count += 1;
-        if (fd >= 0) std.posix.close(fd);
+        if (fd >= 0) _ = std.os.linux.close(fd);
 
         if (mcs.pending == 0) {
             const future = creation_data.future.?;
@@ -792,7 +794,7 @@ fn socket_connected_callback(data: *const CallbackManager.CallbackData) !void {
     };
     defer {
         if (transport_creation_data.fd_created) {
-            std.posix.close(@intCast(transport_creation_data.socket_fd));
+            _ = std.os.linux.close(@intCast(transport_creation_data.socket_fd));
         }
     }
 
@@ -853,7 +855,7 @@ fn create_transport_and_set_future_result(
         python_c.py_decref(@ptrCast(transport_creation_data.future));
 
         if (transport_creation_data.fd_created) {
-            std.posix.close(@intCast(transport_creation_data.socket_fd));
+            _ = std.os.linux.close(@intCast(transport_creation_data.socket_fd));
         }
     }
     if (data.cancelled) return;
@@ -867,14 +869,14 @@ fn create_transport_and_set_future_result(
 
 test "interleave_address_list with mixed IPv4 and IPv6" {
     const allocator = std.testing.allocator;
-    const addresses = try allocator.alloc(std.net.Address, 5);
+    const addresses = try allocator.alloc(utils.Address, 5);
     defer allocator.free(addresses);
 
-    addresses[0] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[1] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[2] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[3] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[4] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[0] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[1] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[2] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[3] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[4] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
 
     try interleave_address_list(allocator, addresses, 1);
 
@@ -887,12 +889,12 @@ test "interleave_address_list with mixed IPv4 and IPv6" {
 
 test "interleave_address_list with only IPv4" {
     const allocator = std.testing.allocator;
-    const addresses = try allocator.alloc(std.net.Address, 3);
+    const addresses = try allocator.alloc(utils.Address, 3);
     defer allocator.free(addresses);
 
-    addresses[0] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[1] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[2] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[0] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[1] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[2] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
 
     try interleave_address_list(allocator, addresses, 1);
 
@@ -904,12 +906,12 @@ test "interleave_address_list with only IPv4" {
 
 test "interleave_address_list with only IPv6" {
     const allocator = std.testing.allocator;
-    const addresses = try allocator.alloc(std.net.Address, 3);
+    const addresses = try allocator.alloc(utils.Address, 3);
     defer allocator.free(addresses);
 
-    addresses[0] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[1] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[2] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[0] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[1] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[2] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
 
     try interleave_address_list(allocator, addresses, 1);
 
@@ -921,14 +923,14 @@ test "interleave_address_list with only IPv6" {
 
 test "interleave_address_list with different interleave values" {
     const allocator = std.testing.allocator;
-    const addresses = try allocator.alloc(std.net.Address, 5);
+    const addresses = try allocator.alloc(utils.Address, 5);
     defer allocator.free(addresses);
 
-    addresses[0] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[1] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[2] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[3] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[4] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[0] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[1] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[2] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[3] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[4] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
 
     try interleave_address_list(allocator, addresses, 2);
 
@@ -941,16 +943,16 @@ test "interleave_address_list with different interleave values" {
 
 test "interleave_address_list with multiple IPv6 addresses and interleave value 2" {
     const allocator = std.testing.allocator;
-    const addresses = try allocator.alloc(std.net.Address, 7);
+    const addresses = try allocator.alloc(utils.Address, 7);
     defer allocator.free(addresses);
 
-    addresses[0] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[1] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[2] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
-    addresses[3] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[4] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[5] = std.net.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
-    addresses[6] = std.net.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[0] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[1] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[2] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
+    addresses[3] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[4] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[5] = utils.Address{ .any = .{ .family = std.posix.AF.INET6, .data = undefined } };
+    addresses[6] = utils.Address{ .any = .{ .family = std.posix.AF.INET, .data = undefined } };
 
     try interleave_address_list(allocator, addresses, 2);
 

@@ -49,7 +49,7 @@ fn signal_handler(data: *const CallbackManager.CallbackData) !void {
 
     const sig = loop.unix_signals.signalfd_info.signo;
 
-    const callback = loop.unix_signals.callbacks.get_value_ptr(@intCast(sig), null).?;
+    const callback = loop.unix_signals.callbacks.get_value_ptr(@as(u6, @intCast(sig)), null).?;
     python_c.py_incref(@alignCast(@ptrCast(callback.data.user_data.?)));
 
     try Loop.Scheduling.Soon.dispatch(loop, callback);
@@ -113,19 +113,19 @@ fn enqueue_signal_fd(self: *UnixSignals) !void {
     });
 }
 
-pub fn link(self: *UnixSignals, sig: u6, callback: CallbackManager.Callback) !void {
+pub fn link(self: *UnixSignals, sig: std.os.linux.SIG, callback: CallbackManager.Callback) !void {
     // When the user create a new thread, we need to avoid that python catch the signal
-    _ = c.signal(@intCast(sig), &dummy_signal_handler);
+    _ = c.signal(@as(c_int, @intCast(@intFromEnum(sig))), &dummy_signal_handler);
 
     const mask = &self.mask;
     std.posix.sigaddset(mask, sig);
     std.posix.sigprocmask(std.os.linux.SIG.BLOCK, mask, null);
-    _ = c.siginterrupt(@intCast(sig), 0);
+    _ = c.siginterrupt(@as(c_int, @intCast(@intFromEnum(sig))), 0);
 
     self.fd = try std.posix.signalfd(self.fd, mask, 0);
     try self.enqueue_signal_fd();
     
-    var prev_callback = self.callbacks.replace(sig, callback);
+    var prev_callback = self.callbacks.replace(@intCast(@intFromEnum(sig)), callback);
     if (prev_callback) |*v| {
         v.data.cancelled = true;
         try Loop.Scheduling.Soon.dispatch_nonthreadsafe(self.loop, v);
@@ -134,8 +134,8 @@ pub fn link(self: *UnixSignals, sig: u6, callback: CallbackManager.Callback) !vo
     }
 }
 
-pub fn unlink(self: *UnixSignals, sig: u6) !void {
-    var callback_info = self.callbacks.delete(sig);
+pub fn unlink(self: *UnixSignals, sig: std.os.linux.SIG) !void {
+    var callback_info = self.callbacks.delete(@intCast(@intFromEnum(sig)));
     if (callback_info) |*v| {
         v.data.cancelled = true;
         try Loop.Scheduling.Soon.dispatch_guaranteed_nonthreadsafe(self.loop, v);
@@ -155,19 +155,19 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
         else => {
             var mask: std.posix.sigset_t = std.posix.sigemptyset();
 
-            std.posix.sigaddset(&mask, sig);
+        std.posix.sigaddset(&mask, sig);
             std.posix.sigprocmask(std.os.linux.SIG.UNBLOCK, &mask, null);
 
             std.posix.sigdelset(&self.mask, sig);
             self.fd = try std.posix.signalfd(self.fd, &self.mask, 0);
-            _ = c.signal(@intCast(sig), c.SIG_DFL);
-            _ = c.siginterrupt(@intCast(sig), 1);
+        _ = c.signal(@as(c_int, @intCast(@intFromEnum(sig))), c.SIG_DFL);
+            _ = c.siginterrupt(@as(c_int, @intCast(@intFromEnum(sig))), 1);
             return;
         }
     };
 
     try self.loop.reserve_slots(1);
-    if (!self.callbacks.insert(sig, callback)) {
+    if (!self.callbacks.insert(@intCast(@intFromEnum(sig)), callback)) {
         return error.OutOfMemory;
     }
 }
@@ -175,7 +175,7 @@ pub fn unlink(self: *UnixSignals, sig: u6) !void {
 pub fn init(loop: *Loop) !void {
     var mask: std.posix.sigset_t = std.posix.sigemptyset();
     const fd = try std.posix.signalfd(-1, &mask, 0);
-    errdefer std.posix.close(fd);
+    errdefer _ = std.os.linux.close(fd);
 
     loop.unix_signals = .{
         .callbacks = try CallbacksBTree.init(loop.allocator),
@@ -196,7 +196,7 @@ pub fn init(loop: *Loop) !void {
 }
 
 pub fn deinit(self: *UnixSignals) void {
-    std.posix.close(self.fd);
+    _ = std.os.linux.close(self.fd);
     const loop = self.loop;
 
     var mask: std.posix.sigset_t = std.posix.sigemptyset();
@@ -204,9 +204,9 @@ pub fn deinit(self: *UnixSignals) void {
     while (true) {
         var sig: u6 = undefined;
         var value = self.callbacks.pop(&sig) orelse break;
-        std.posix.sigaddset(&mask, sig);
+        std.posix.sigaddset(&mask, @as(std.os.linux.SIG, @enumFromInt(sig)));
 
-        _ = c.signal(@intCast(sig), c.SIG_DFL);
+        _ = c.signal(@as(c_int, @intCast(sig)), c.SIG_DFL);
         value.data.cancelled = true;
         Loop.Scheduling.Soon.dispatch_guaranteed(loop, &value) catch {};
     }

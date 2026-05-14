@@ -39,7 +39,7 @@ const ServerCreationData = struct {
 
 const ServerSocketData = struct {
     creation_data: *ServerCreationData,
-    address_list: ?[]std.net.Address = null,
+    address_list: ?[]utils.Address = null,
 
     pub fn deinit(self: *ServerSocketData) void {
         const loop_data = utils.get_data_ptr(Loop, self.creation_data.loop.?);
@@ -149,10 +149,10 @@ fn z_try_resolve_server_host(creation_data: *ServerCreationData) !void {
 
     if (hostname.len == 0) {
         const allow_ipv6 = loop_data.dns.ipv6_supported;
-        var list = std.ArrayList(std.net.Address){};
-        try list.append(allocator, std.net.Address.initIp4(.{0, 0, 0, 0}, 0));
+        var list = std.ArrayList(utils.Address){ .items = &.{}, .capacity = 0 };
+        try list.append(allocator, utils.Address.initIp4(.{0, 0, 0, 0}, 0));
         if (allow_ipv6) {
-            try list.append(allocator, std.net.Address.initIp6(.{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0));
+            try list.append(allocator, utils.Address.initIp6(.{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0));
         }
         server_data.address_list = try list.toOwnedSlice(allocator);
         const callback = CallbackManager.Callback{
@@ -175,7 +175,7 @@ fn z_try_resolve_server_host(creation_data: *ServerCreationData) !void {
     };
     const address_list = try loop_data.dns.lookup(hostname, &resolver_callback) orelse return;
 
-    server_data.address_list = try allocator.dupe(std.net.Address, address_list);
+    server_data.address_list = try allocator.dupe(utils.Address, address_list);
     errdefer allocator.free(server_data.address_list.?);
 
     const callback = CallbackManager.Callback{
@@ -221,7 +221,7 @@ fn z_server_host_resolved_callback(server_data: *ServerSocketData) !void {
         return set_future_exception(error.PythonError, creation_data.future.?);
     }
 
-    server_data.address_list = try allocator.dupe(std.net.Address, address_list);
+    server_data.address_list = try allocator.dupe(utils.Address, address_list);
     errdefer allocator.free(server_data.address_list.?);
 
     const callback = CallbackManager.Callback{
@@ -304,30 +304,34 @@ fn z_create_server_socket(server_data: *ServerSocketData) !void {
         addr_with_port.setPort(port);
 
         const flags: u32 = std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC;
-        const fd = std.posix.socket(addr_with_port.any.family, flags, std.posix.IPPROTO.TCP) catch |err| {
-            last_err = err;
+        const fd_ret = std.os.linux.socket(addr_with_port.any.family, flags, std.os.linux.IPPROTO.TCP);
+        if (@as(i32, @intCast(fd_ret)) < 0) {
+            last_err = error.SystemResources;
             continue;
-        };
-        errdefer std.posix.close(fd);
+        }
+        const fd: std.posix.fd_t = @intCast(fd_ret);
+        errdefer _ = std.os.linux.close(fd);
 
         if (reuse_address) {
             const val: c_int = 1;
-            std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, std.mem.asBytes(&val)) catch {};
+            _ = std.os.linux.setsockopt(fd, std.os.linux.SOL.SOCKET, std.os.linux.SO.REUSEADDR, @as([*]const u8, @ptrCast(std.mem.asBytes(&val))), @sizeOf(c_int));
         }
         if (reuse_port) {
             const val: c_int = 1;
-            std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, std.mem.asBytes(&val)) catch {};
+            _ = std.os.linux.setsockopt(fd, std.os.linux.SOL.SOCKET, std.os.linux.SO.REUSEPORT, @as([*]const u8, @ptrCast(std.mem.asBytes(&val))), @sizeOf(c_int));
         }
 
-        std.posix.bind(fd, &addr_with_port.any, addr_with_port.getOsSockLen()) catch |err| {
-            last_err = err;
+        const bind_rc = std.os.linux.bind(fd, @ptrCast(&addr_with_port.any), addr_with_port.getOsSockLen());
+        if (@as(i32, @intCast(bind_rc)) < 0) {
+            last_err = error.SystemResources;
             continue;
-        };
+        }
 
-        std.posix.listen(fd, @intCast(backlog)) catch |err| {
-            last_err = err;
+        const listen_rc = std.os.linux.listen(fd, @intCast(backlog));
+        if (@as(i32, @intCast(listen_rc)) < 0) {
+            last_err = error.SystemResources;
             continue;
-        };
+        }
 
         const py_fd = python_c.PyLong_FromLong(@intCast(fd)) orelse return error.PythonError;
         defer python_c.py_decref(py_fd);

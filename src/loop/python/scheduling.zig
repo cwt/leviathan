@@ -203,14 +203,16 @@ inline fn z_loop_delayed_call(
             const when_sec = @trunc(ts);
             time = .{
                 .sec = @intFromFloat(when_sec),
-                .nsec = @as(@FieldType(std.posix.timespec, "nsec"), @intFromFloat((ts - when_sec) * std.time.ns_per_s))
+                .nsec = @as(@FieldType(std.posix.timespec, "nsec"), @intFromFloat((ts - when_sec) * 1_000_000_000))
             };
         }else{
-            time = try std.posix.clock_gettime(.MONOTONIC);
+            var raw_ts: std.os.linux.timespec = undefined;
+            _ = std.os.linux.clock_gettime(.MONOTONIC, &raw_ts);
+            time = @bitCast(raw_ts);
             const delay_sec = @trunc(ts);
 
             time.sec += @intFromFloat(delay_sec);
-            time.nsec += @as(@FieldType(std.posix.timespec, "nsec"), @intFromFloat((ts - delay_sec) * std.time.ns_per_s));
+            time.nsec += @as(@FieldType(std.posix.timespec, "nsec"), @intFromFloat((ts - delay_sec) * 1_000_000_000));
         }
 
         const py_callback = python_c.py_newref(args[1].?);

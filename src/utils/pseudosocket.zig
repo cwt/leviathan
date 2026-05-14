@@ -1,7 +1,8 @@
 const std = @import("std");
 const python_c = @import("python_c");
 const PyObject = *python_c.PyObject;
-const Address = @import("address.zig");
+const address_mod = @import("address.zig");
+const Address = address_mod.Address;
 
 pub const PseudoSocketObject = extern struct {
     ob_base: python_c.PyObject,
@@ -20,10 +21,11 @@ fn pseudosocket_getsockname(self: ?*PseudoSocketObject, _: ?PyObject) callconv(.
     var addr: std.posix.sockaddr.storage = undefined;
     var addrlen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);
     
-    std.posix.getsockname(instance.fd, @ptrCast(&addr), &addrlen) catch {
+    _ = std.os.linux.getsockname(instance.fd, @ptrCast(&addr), &addrlen);
+    if (addrlen == 0 or addr.family == 0) {
         python_c.raise_python_runtime_error("getsockname failed\x00");
         return null;
-    };
+    }
     
     if (addr.family == std.posix.AF.UNIX) {
         if (addrlen <= @offsetOf(std.posix.sockaddr.un, "path")) {
@@ -34,7 +36,7 @@ fn pseudosocket_getsockname(self: ?*PseudoSocketObject, _: ?PyObject) callconv(.
         return python_c.PyUnicode_FromStringAndSize(path.ptr, @intCast(path.len));
     }
     
-    return Address.to_py_addr(std.net.Address.initPosix(@ptrCast(&addr))) catch {
+    return Address.toPyAddr(Address.initPosix(@ptrCast(&addr))) catch {
         python_c.raise_python_runtime_error("Failed to convert address\x00");
         return null;
     };
@@ -59,7 +61,7 @@ fn pseudosocket_getpeername(self: ?*PseudoSocketObject, _: ?PyObject) callconv(.
         return python_c.PyUnicode_FromStringAndSize(path.ptr, @intCast(path.len));
     }
     
-    return Address.to_py_addr(std.net.Address.initPosix(@ptrCast(&addr))) catch {
+    return Address.toPyAddr(Address.initPosix(@ptrCast(&addr))) catch {
         python_c.raise_python_runtime_error("Failed to convert address\x00");
         return null;
     };

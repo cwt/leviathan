@@ -1,12 +1,13 @@
 const std = @import("std");
+const utils = @import("utils");
 
 // Localhost addresses for quick reference
-const localhost_address_list: []const std.net.Address = &[_]std.net.Address{
-    std.net.Address.initIp4(
+const localhost_address_list: []const utils.Address = &[_]utils.Address{
+    utils.Address.initIp4(
         .{ 127, 0, 0, 1 },
         0,
     ),
-    std.net.Address.initIp6(
+    utils.Address.initIp6(
         .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
         0,
         0,
@@ -14,11 +15,11 @@ const localhost_address_list: []const std.net.Address = &[_]std.net.Address{
     ),
 };
 
-var tmp_address: std.net.Address = undefined;
+var tmp_address: utils.Address = undefined;
 
 // TODO: Implement resolv options
 pub const Configuration = struct {
-    servers: []std.net.Address,
+    servers: []utils.Address,
     search: [][]u8,
 };
 
@@ -51,7 +52,7 @@ pub fn validate_hostname(hostname: []const u8) bool {
     return true;
 }
 
-pub fn build_reverse_name(address: std.net.Address, buf: []u8) ![]u8 {
+pub fn build_reverse_name(address: utils.Address, buf: []u8) ![]u8 {
     switch (address.any.family) {
         std.posix.AF.INET => {
             const ip = @as([4]u8, @bitCast(address.in.sa.addr));
@@ -75,7 +76,7 @@ pub fn build_reverse_name(address: std.net.Address, buf: []u8) ![]u8 {
 }
 
 pub fn parse_name(full_data: []const u8, initial_offset: usize, allocator: std.mem.Allocator) ![]u8 {
-    var result = std.ArrayListUnmanaged(u8){};
+    var result = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
     errdefer result.deinit(allocator);
     
     var offset = initial_offset;
@@ -106,23 +107,23 @@ pub fn parse_name(full_data: []const u8, initial_offset: usize, allocator: std.m
     return try result.toOwnedSlice(allocator);
 }
 
-pub fn resolve_address(hostname: []const u8, allow_ipv6: bool) !?[]const std.net.Address {
+pub fn resolve_address(hostname: []const u8, allow_ipv6: bool) !?[]const utils.Address {
     // 1. Check for localhost
     if (std.mem.eql(u8, hostname, "localhost")) {
         return localhost_address_list[0..(1 + @as(usize, @intFromBool(allow_ipv6)))];
     }
 
     // 2. Check for IPv4
-    if (std.net.Address.resolveIp(hostname, 0)) |res| {
+    if (utils.Address.resolveIp(hostname, 0)) |res| {
         tmp_address = res;
-        return @as([*]const std.net.Address, @ptrCast(&tmp_address))[0..1];
+        return @as([*]const utils.Address, @ptrCast(&tmp_address))[0..1];
     }else |_| {}
 
     // 3. Check for IPv6
     if (allow_ipv6) {
-        if (std.net.Address.resolveIp6(hostname, 0)) |res| {
+        if (utils.Address.resolveIp6(hostname, 0)) |res| {
             tmp_address = res;
-            return @as([*]const std.net.Address, @ptrCast(&tmp_address))[0..1];
+            return @as([*]const utils.Address, @ptrCast(&tmp_address))[0..1];
         }else |_| {}
     }
 
@@ -141,10 +142,10 @@ pub fn parse_resolv_configuration(allocator: std.mem.Allocator, content: []const
     const search_tmp_buf = try allocator.alloc(u8, 255);
     defer allocator.free(search_tmp_buf);
 
-    var servers = std.ArrayList(std.net.Address){};
+    var servers = std.ArrayList(utils.Address){ .items = &.{}, .capacity = 0 };
     defer servers.deinit(allocator);
 
-    var search_hosts = std.ArrayList([]u8){};
+    var search_hosts = std.ArrayList([]u8){ .items = &.{}, .capacity = 0 };
     defer search_hosts.deinit(allocator);
     errdefer {
         for (search_hosts.items) |host| {
@@ -164,7 +165,7 @@ pub fn parse_resolv_configuration(allocator: std.mem.Allocator, content: []const
 
         if (std.mem.eql(u8, first_word, "nameserver")) {
             const ip_str = words_iter.next() orelse return error.InvalidConfiguration;
-            const address = try std.net.Address.parseIp(ip_str, 53);
+            const address = try utils.Address.parseIp(ip_str, 53);
 
             switch (address.any.family) {
                 std.posix.AF.INET, std.posix.AF.INET6 => {},
@@ -191,7 +192,7 @@ pub fn parse_resolv_configuration(allocator: std.mem.Allocator, content: []const
     }
 
     if (servers.items.len == 0) {
-        try servers.append(allocator, try std.net.Address.parseIp("1.1.1.1", 53));
+        try servers.append(allocator, try utils.Address.parseIp("1.1.1.1", 53));
     }
 
     const search_hosts_slice = try search_hosts.toOwnedSlice(allocator);
@@ -296,7 +297,7 @@ test "parse resolv.conf with invalid nameserver" {
     const allocator = arena.allocator();
 
     try std.testing.expectError(
-        error.InvalidIPAddressFormat, 
+        error.InvalidCharacter, 
         parse_resolv_configuration(allocator, content),
     );
 }

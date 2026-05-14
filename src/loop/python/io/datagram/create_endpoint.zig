@@ -20,8 +20,8 @@ const DatagramCreationData = struct {
     py_allow_broadcast: ?PyObject = null,
     py_sock: ?PyObject = null,
 
-    local_addresses: ?[]std.net.Address = null,
-    remote_addresses: ?[]std.net.Address = null,
+    local_addresses: ?[]utils.Address = null,
+    remote_addresses: ?[]utils.Address = null,
 
     pub fn deinit(self: *DatagramCreationData) void {
         const loop_data = utils.get_data_ptr(Loop, self.loop);
@@ -133,7 +133,7 @@ fn resolve_local_addr(data: *const CallbackManager.CallbackData) !void {
             .data = .{ .user_data = dcd },
         };
         const addresses = try loop_data.dns.lookup(addr_info.host, &resolver_callback) orelse return;
-        dcd.local_addresses = try loop_data.allocator.dupe(std.net.Address, addresses);
+        dcd.local_addresses = try loop_data.allocator.dupe(utils.Address, addresses);
         // Update ports
         for (dcd.local_addresses.?) |*addr| addr.setPort(addr_info.port);
     }
@@ -153,7 +153,7 @@ fn local_addr_resolved_callback(data: *const CallbackManager.CallbackData) !void
     const loop_data = utils.get_data_ptr(Loop, dcd.loop);
     const addr_info = get_addr_tuple(dcd.py_local_addr.?) catch |err| return set_future_exception(err, dcd.future);
     const addresses = try loop_data.dns.lookup(addr_info.host, null) orelse return set_future_exception(error.PythonError, dcd.future);
-    dcd.local_addresses = try loop_data.allocator.dupe(std.net.Address, addresses);
+    dcd.local_addresses = try loop_data.allocator.dupe(utils.Address, addresses);
     for (dcd.local_addresses.?) |*addr| addr.setPort(addr_info.port);
 
     const callback = CallbackManager.Callback{
@@ -178,7 +178,7 @@ fn resolve_remote_addr(data: *const CallbackManager.CallbackData) !void {
             .data = .{ .user_data = dcd },
         };
         const addresses = try loop_data.dns.lookup(addr_info.host, &resolver_callback) orelse return;
-        dcd.remote_addresses = try loop_data.allocator.dupe(std.net.Address, addresses);
+        dcd.remote_addresses = try loop_data.allocator.dupe(utils.Address, addresses);
         for (dcd.remote_addresses.?) |*addr| addr.setPort(addr_info.port);
     }
 
@@ -197,7 +197,7 @@ fn remote_addr_resolved_callback(data: *const CallbackManager.CallbackData) !voi
     const loop_data = utils.get_data_ptr(Loop, dcd.loop);
     const addr_info = get_addr_tuple(dcd.py_remote_addr.?) catch |err| return set_future_exception(err, dcd.future);
     const addresses = try loop_data.dns.lookup(addr_info.host, null) orelse return set_future_exception(error.PythonError, dcd.future);
-    dcd.remote_addresses = try loop_data.allocator.dupe(std.net.Address, addresses);
+    dcd.remote_addresses = try loop_data.allocator.dupe(utils.Address, addresses);
     for (dcd.remote_addresses.?) |*addr| addr.setPort(addr_info.port);
 
     const callback = CallbackManager.Callback{
@@ -223,8 +223,10 @@ fn create_endpoint(data: *const CallbackManager.CallbackData) !void {
         family = addrs[0].any.family;
     }
 
-    const fd = try std.posix.socket(family, std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC, 0);
-    errdefer std.posix.close(fd);
+    const socket_ret = std.os.linux.socket(family, @as(u32, @intCast(std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC)), 0);
+    if (@as(i32, @intCast(socket_ret)) < 0) return error.SystemResources;
+    const fd: std.posix.fd_t = @intCast(socket_ret);
+    errdefer _ = std.os.linux.close(fd);
 
     if (dcd.py_reuse_port) |rp| {
         if (python_c.PyObject_IsTrue(rp) != 0) {
@@ -245,9 +247,11 @@ fn create_endpoint(data: *const CallbackManager.CallbackData) !void {
         var bound = false;
         for (addrs) |*addr| {
             if (addr.any.family != family) continue;
-            std.posix.bind(fd, &addr.any, addr.getOsSockLen()) catch continue;
-            bound = true;
-            break;
+            const bind_ret = std.os.linux.bind(fd, @ptrCast(&addr.any), addr.getOsSockLen());
+            if (@as(i32, @intCast(bind_ret)) >= 0) {
+                bound = true;
+                break;
+            }
         }
         if (!bound) return set_future_exception(error.SystemResources, dcd.future);
     }
@@ -257,9 +261,11 @@ fn create_endpoint(data: *const CallbackManager.CallbackData) !void {
         var connected = false;
         for (addrs) |*addr| {
             if (addr.any.family != family) continue;
-            std.posix.connect(fd, &addr.any, addr.getOsSockLen()) catch continue;
-            connected = true;
-            break;
+            const connect_ret = std.os.linux.connect(fd, @ptrCast(&addr.any), addr.getOsSockLen());
+            if (@as(i32, @intCast(connect_ret)) >= 0) {
+                connected = true;
+                break;
+            }
         }
         if (!connected) return set_future_exception(error.SystemResources, dcd.future);
     }

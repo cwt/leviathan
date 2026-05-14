@@ -44,11 +44,11 @@ pub fn init(self: *DNS, loop: *Loop) !void {
     try self.load_configuration(self.allocator);
 
     // TODO: Figure out if there is a better way
-    const ret = std.posix.socket(std.posix.AF.INET6, std.posix.SOCK.STREAM, 0);
-    if (ret) |sock| {
+    const ret = std.os.linux.socket(std.posix.AF.INET6, @as(u32, @intCast(std.posix.SOCK.STREAM)), 0);
+    if (@as(i32, @intCast(ret)) >= 0) {
         self.ipv6_supported = true;
-        std.posix.close(sock);
-    } else |_| {
+        _ = std.os.linux.close(@intCast(ret));
+    } else {
         self.ipv6_supported = false;
     }
 
@@ -56,18 +56,21 @@ pub fn init(self: *DNS, loop: *Loop) !void {
 }
 
 fn load_configuration(self: *DNS, allocator: std.mem.Allocator) !void {
-    const file = try std.fs.openFileAbsolute("/etc/resolv.conf", .{
-        .mode = .read_only,
-    });
-    defer file.close();
+    const fd_ret = std.os.linux.open("/etc/resolv.conf", .{}, 0);
+    if (@as(i32, @intCast(fd_ret)) < 0) return error.Unexpected;
+    const fd: std.posix.fd_t = @intCast(fd_ret);
+    defer _ = std.os.linux.close(fd);
 
-    const stat_data = try file.stat();
-    const size = stat_data.size;
+    var statx_buf: std.os.linux.Statx = undefined;
+    const statx_ret = std.os.linux.statx(fd, "", @as(u32, @intCast(std.os.linux.AT.EMPTY_PATH)), std.os.linux.STATX{ .SIZE = true }, &statx_buf);
+    if (@as(i32, @intCast(statx_ret)) < 0) return error.Unexpected;
+    const size: usize = @intCast(statx_buf.size);
 
     const content = try allocator.alloc(u8, size);
     defer allocator.free(content);
 
-    _ = try file.readAll(content);
+    const read_ret = std.os.linux.read(fd, content.ptr, content.len);
+    if (@as(i32, @intCast(read_ret)) < 0) return error.Unexpected;
 
     self.configuration = try Parsers.parse_resolv_configuration(allocator, content);
 }
@@ -84,7 +87,7 @@ pub fn lookup(
     self: *DNS,
     hostname: []const u8,
     callback: ?*const CallbackManager.Callback,
-) !?[]const std.net.Address {
+) !?[]const utils.Address {
     const parsed_hostname = std.ascii.lowerString(&self.parsed_hostname_buf, hostname);
 
     const cache_slot = self.get_cache_slot(parsed_hostname);
@@ -118,7 +121,7 @@ pub fn lookup(
 
 pub fn reverse_lookup(
     self: *DNS,
-    address: std.net.Address,
+    address: utils.Address,
     callback: *const CallbackManager.Callback,
 ) !void {
     var buf: [128]u8 = undefined;
@@ -207,7 +210,7 @@ test "get_cache_slot distributes hostnames across slots" {
     }
 
     // Check that not all slots are the same
-    var unique_slots = std.ArrayList(*Cache){};
+    var unique_slots = std.ArrayList(*Cache){ .items = &.{}, .capacity = 0 };
     defer unique_slots.deinit(std.testing.allocator);
 
     loop: for (slots) |slot| {
@@ -251,7 +254,7 @@ test "get_cache_slot handles different hostname lengths" {
     }
 
     // Check that different length hostnames can map to different slots
-    var unique_slots = std.ArrayList(*Cache){};
+    var unique_slots = std.ArrayList(*Cache){ .items = &.{}, .capacity = 0 };
     defer unique_slots.deinit(std.testing.allocator);
 
     loop: for (slots) |slot| {

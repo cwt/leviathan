@@ -52,7 +52,7 @@ fn datagram_dealloc(self: ?*DatagramTransportObject) callconv(.c) void {
         }
     }
     if (instance.fd >= 0) {
-        std.posix.close(instance.fd);
+        _ = std.os.linux.close(instance.fd);
         instance.fd = -1;
     }
     instance.closed = true;
@@ -73,7 +73,7 @@ fn datagram_traverse(self: ?*DatagramTransportObject, visit: python_c.visitproc,
 fn datagram_clear(self: ?*DatagramTransportObject) callconv(.c) c_int {
     const instance = self.?;
     if (instance.fd >= 0) {
-        std.posix.close(instance.fd);
+        _ = std.os.linux.close(instance.fd);
         instance.fd = -1;
     }
     instance.closed = true;
@@ -95,7 +95,7 @@ fn datagram_close(self: ?*DatagramTransportObject, _: ?PyObject) callconv(.c) ?P
     if (!instance.closed) {
         instance.closed = true;
         if (instance.fd >= 0) {
-            std.posix.close(instance.fd);
+            _ = std.os.linux.close(instance.fd);
             instance.fd = -1;
         }
     }

@@ -11,10 +11,9 @@ const std = @import("std");
 pub fn loop_time(self: ?*Loop.Python.LoopObject, _: ?PyObject) callconv(.c) ?PyObject {
     _ = self.?;
 
-    const time = std.posix.clock_gettime(.MONOTONIC) catch |err| {
-        return utils.handle_zig_function_error(err, null);
-    };
+    var time: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(.MONOTONIC, &time);
 
-    const f_time: f64 = @as(f64, @floatFromInt(time.sec)) + @as(f64, @floatFromInt(time.nsec)) / std.time.ns_per_s;
+    const f_time: f64 = @as(f64, @floatFromInt(time.sec)) + @as(f64, @floatFromInt(time.nsec)) / 1_000_000_000;
     return python_c.PyFloat_FromDouble(f_time);
 }

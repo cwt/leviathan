@@ -2,188 +2,328 @@ const std = @import("std");
 const python_c = @import("python_c");
 const PyObject = *python_c.PyObject;
 
-pub fn to_py_addr(address: std.net.Address) !PyObject {
-    switch (address.any.family) {
-        std.posix.AF.INET => {
-            const sa = address.in.sa;
-            var buf: [16]u8 = undefined;
-            const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET, &sa.addr, &buf, 16) orelse return error.SystemResources;
-            const host_len = std.mem.len(host_ptr);
-            const port = address.getPort();
+pub const Address = extern union {
+    any: std.posix.sockaddr,
+    in: PosixAddress.IN,
+    in6: PosixAddress.IN6,
+    un: std.posix.sockaddr.un,
 
-            const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
-            defer python_c.py_decref(py_host);
-            const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
-            defer python_c.py_decref(py_port);
-            return python_c.PyTuple_Pack(2, py_host, py_port) orelse error.PythonError;
-        },
-        std.posix.AF.INET6 => {
-            const sa = address.in6.sa;
-            var buf: [46]u8 = undefined;
-            const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET6, &sa.addr, &buf, 46) orelse return error.SystemResources;
-            const host_len = std.mem.len(host_ptr);
-            const port = address.getPort();
-
-            const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
-            defer python_c.py_decref(py_host);
-            const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
-            defer python_c.py_decref(py_port);
-            
-            const py_flow = python_c.PyLong_FromUnsignedLongLong(sa.flowinfo) orelse return error.PythonError;
-            defer python_c.py_decref(py_flow);
-            const py_scope = python_c.PyLong_FromUnsignedLongLong(sa.scope_id) orelse return error.PythonError;
-            defer python_c.py_decref(py_scope);
-            
-            return python_c.PyTuple_Pack(4, py_host, py_port, py_flow, py_scope) orelse error.PythonError;
-        },
-        std.posix.AF.UNIX => {
-            const sa = address.un;
-            const path = std.mem.span(@as([*:0]const u8, @ptrCast(&sa.path)));
-            return python_c.PyUnicode_FromStringAndSize(path.ptr, @intCast(path.len)) orelse error.PythonError;
-        },
-        else => return error.UnsupportedAddressFamily,
-    }
-}
-
-pub fn to_py_addr_with_port(address: std.net.Address, port: u16) !PyObject {
-    switch (address.any.family) {
-        std.posix.AF.INET => {
-            const sa = address.in.sa;
-            var buf: [16]u8 = undefined;
-            const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET, &sa.addr, &buf, 16) orelse return error.SystemResources;
-            const host_len = std.mem.len(host_ptr);
-
-            const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
-            defer python_c.py_decref(py_host);
-            const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
-            defer python_c.py_decref(py_port);
-            return python_c.PyTuple_Pack(2, py_host, py_port) orelse error.PythonError;
-        },
-        std.posix.AF.INET6 => {
-            const sa = address.in6.sa;
-            var buf: [46]u8 = undefined;
-            const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET6, &sa.addr, &buf, 46) orelse return error.SystemResources;
-            const host_len = std.mem.len(host_ptr);
-
-            const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
-            defer python_c.py_decref(py_host);
-            const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
-            defer python_c.py_decref(py_port);
-            
-            const py_flow = python_c.PyLong_FromUnsignedLongLong(sa.flowinfo) orelse return error.PythonError;
-            defer python_c.py_decref(py_flow);
-            const py_scope = python_c.PyLong_FromUnsignedLongLong(sa.scope_id) orelse return error.PythonError;
-            defer python_c.py_decref(py_scope);
-            
-            return python_c.PyTuple_Pack(4, py_host, py_port, py_flow, py_scope) orelse error.PythonError;
-        },
-        std.posix.AF.UNIX => {
-            const sa = address.un;
-            const path = std.mem.span(@as([*:0]const u8, @ptrCast(&sa.path)));
-            return python_c.PyUnicode_FromStringAndSize(path.ptr, @intCast(path.len)) orelse error.PythonError;
-        },
-        else => return error.UnsupportedAddressFamily,
-    }
-}
-
-pub fn from_py_addr(py_addr: PyObject, family: ?i32) !std.net.Address {
-    if (python_c.unicode_check(py_addr)) {
-        // Unix path
-        var size: python_c.Py_ssize_t = 0;
-        const ptr = python_c.PyUnicode_AsUTF8AndSize(py_addr, &size) orelse return error.PythonError;
-        const path = ptr[0..@intCast(size)];
-        if (path.len >= 108) return error.NameTooLong;
-        
-        var sun: std.posix.sockaddr.un = undefined;
-        @memset(std.mem.asBytes(&sun), 0);
-        sun.family = std.posix.AF.UNIX;
-        @memcpy(sun.path[0..path.len], path);
-        sun.path[path.len] = 0;
-        return .{ .un = sun };
+    pub fn initIp4(ip: [4]u8, port: u16) Address {
+        return .{
+            .in = .{
+                .sa = .{
+                    .addr = @as(u32, @bitCast(ip)),
+                    .port = std.mem.nativeToBig(u16, port),
+                    .zero = .{0} ** 8,
+                },
+            },
+        };
     }
 
-    if (python_c.PyTuple_Check(py_addr) <= 0) return error.PythonError;
-    const size = python_c.PyTuple_Size(py_addr);
-    
-    const py_host = python_c.PyTuple_GetItem(py_addr, 0) orelse return error.PythonError;
-    const py_port = python_c.PyTuple_GetItem(py_addr, 1) orelse return error.PythonError;
+    pub fn initIp6(ip: [16]u8, port: u16, flowinfo: u32, scope_id: u32) Address {
+        return .{
+            .in6 = .{
+                .sa = .{
+                    .port = std.mem.nativeToBig(u16, port),
+                    .flowinfo = flowinfo,
+                    .addr = ip,
+                    .scope_id = scope_id,
+                },
+            },
+        };
+    }
 
-    var host_size: python_c.Py_ssize_t = 0;
-    const host_ptr = python_c.PyUnicode_AsUTF8AndSize(py_host, &host_size) orelse return error.PythonError;
-    const host = host_ptr[0..@intCast(host_size)];
-    const port: u16 = @intCast(python_c.PyLong_AsInt(py_port));
+    pub fn initPosix(sa_ptr: *const anyopaque) Address {
+        const sa: *const std.posix.sockaddr = @alignCast(@ptrCast(sa_ptr));
+        return switch (sa.family) {
+            std.posix.AF.INET => .{
+                .in = .{
+                    .sa = @as(*const std.posix.sockaddr.in, @alignCast(@ptrCast(sa_ptr))).*,
+                },
+            },
+            std.posix.AF.INET6 => .{
+                .in6 = .{
+                    .sa = @as(*const std.posix.sockaddr.in6, @alignCast(@ptrCast(sa_ptr))).*,
+                },
+            },
+            std.posix.AF.UNIX => .{
+                .un = @as(*const std.posix.sockaddr.un, @alignCast(@ptrCast(sa_ptr))).*,
+            },
+            else => .{ .any = sa.* },
+        };
+    }
 
-    if (size == 2) {
-        // IPv4 or IPv6 (depending on family or content)
-        if (family == std.posix.AF.INET6 or std.mem.indexOfScalar(u8, host, ':') != null) {
-            return std.net.Address.parseIp6(host, port) catch |err| {
-                if (err == error.InvalidCharacter) {
-                    // Might be a hostname, but from_py_addr usually expects resolved IPs
-                    // or we handle it in DNS. For now, assume it's an IP literal.
-                    return err;
-                }
-                return err;
-            };
-        } else {
-            return std.net.Address.parseIp4(host, port);
+    pub fn getPort(self: Address) u16 {
+        return switch (self.any.family) {
+            std.posix.AF.INET => std.mem.bigToNative(u16, self.in.sa.port),
+            std.posix.AF.INET6 => std.mem.bigToNative(u16, self.in6.sa.port),
+            else => 0,
+        };
+    }
+
+    pub fn setPort(self: *Address, port: u16) void {
+        switch (self.any.family) {
+            std.posix.AF.INET => {
+                self.in.sa.port = std.mem.nativeToBig(u16, port);
+            },
+            std.posix.AF.INET6 => {
+                self.in6.sa.port = std.mem.nativeToBig(u16, port);
+            },
+            else => {},
         }
-    } else if (size == 4) {
-        // IPv6 with flowinfo and scope_id
-        const py_flow = python_c.PyTuple_GetItem(py_addr, 2) orelse return error.PythonError;
-        const py_scope = python_c.PyTuple_GetItem(py_addr, 3) orelse return error.PythonError;
-        
-        const flowinfo: u32 = @intCast(python_c.PyLong_AsUnsignedLong(py_flow));
-        const scope_id: u32 = @intCast(python_c.PyLong_AsUnsignedLong(py_scope));
-        
-        var addr = try std.net.Address.parseIp6(host, port);
-        addr.in6.sa.flowinfo = flowinfo;
-        addr.in6.sa.scope_id = scope_id;
-        return addr;
     }
-    
-    return error.InvalidAddress;
-}
 
-// test "to_py_addr/from_py_addr: IPv4" {
-//     const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8080);
-//     const py_addr = try to_py_addr(addr);
-//     defer python_c.py_decref(py_addr);
-//     
-//     try std.testing.expect(python_c.PyTuple_Check(py_addr) > 0);
-//     try std.testing.expectEqual(@as(python_c.Py_ssize_t, 2), python_c.PyTuple_Size(py_addr));
-//     
-//     const back = try from_py_addr(py_addr, null);
-//     try std.testing.expectEqual(std.posix.AF.INET, back.any.family);
-//     try std.testing.expectEqual(@as(u16, 8080), back.getPort());
-// }
-// 
-// test "to_py_addr/from_py_addr: IPv6" {
-//     const addr = std.net.Address.initIp6(.{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 }, 8080, 0, 0);
-//     const py_addr = try to_py_addr(addr);
-//     defer python_c.py_decref(py_addr);
-//     
-//     try std.testing.expect(python_c.PyTuple_Check(py_addr) > 0);
-//     try std.testing.expectEqual(@as(python_c.Py_ssize_t, 4), python_c.PyTuple_Size(py_addr));
-//     
-//     const back = try from_py_addr(py_addr, null);
-//     try std.testing.expectEqual(std.posix.AF.INET6, back.any.family);
-//     try std.testing.expectEqual(@as(u16, 8080), back.getPort());
-// }
-// 
-// test "to_py_addr/from_py_addr: Unix" {
-//     const path = "/tmp/test.sock";
-//     var sun: std.posix.sockaddr.un = undefined;
-//     sun.family = std.posix.AF.UNIX;
-//     @memcpy(sun.path[0..path.len], path);
-//     sun.path[path.len] = 0;
-//     const addr = std.net.Address{ .un = sun };
-//     
-//     const py_addr = try to_py_addr(addr);
-//     defer python_c.py_decref(py_addr);
-//     
-//     try std.testing.expect(python_c.unicode_check(py_addr));
-//     
-//     const back = try from_py_addr(py_addr, null);
-//     try std.testing.expectEqual(std.posix.AF.UNIX, back.any.family);
-//     try std.testing.expectEqualStrings(path, std.mem.span(@as([*:0]const u8, @ptrCast(&back.un.path))));
-// }
+    pub fn getOsSockLen(self: Address) std.posix.socklen_t {
+        return switch (self.any.family) {
+            std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
+            std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
+            std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
+            else => @sizeOf(std.posix.sockaddr.storage),
+        };
+    }
+
+    pub fn resolveIp(host: []const u8, port: u16) !Address {
+        return parseIp4(host, port);
+    }
+
+    pub fn resolveIp6(host: []const u8, port: u16) !Address {
+        return parseIp6(host, port);
+    }
+
+    pub fn parseIp(host: []const u8, port: u16) !Address {
+        return parseIp4(host, port) catch |err| {
+            if (err == error.InvalidIPAddressFormat) return parseIp6(host, port);
+            return err;
+        };
+    }
+
+    pub fn parseIp4(host: []const u8, port: u16) !Address {
+        var bytes: [4]u8 = undefined;
+        var octet_i: usize = 0;
+        var i: usize = 0;
+        while (i < host.len) {
+            if (octet_i >= 4) return error.InvalidIPAddressFormat;
+            var val: u16 = 0;
+            while (i < host.len and host[i] != '.') : (i += 1) {
+                if (host[i] < '0' or host[i] > '9') return error.InvalidIPAddressFormat;
+                val = val * 10 + (host[i] - '0');
+            }
+            if (i > 0 and host[i - 1] == '.') return error.InvalidIPAddressFormat;
+            if (val > 255) return error.InvalidIPAddressFormat;
+            bytes[octet_i] = @intCast(val);
+            octet_i += 1;
+            if (i < host.len) i += 1;
+        }
+        if (octet_i != 4) return error.InvalidIPAddressFormat;
+        return initIp4(bytes, port);
+    }
+
+    pub fn parseIp6(host: []const u8, port: u16) !Address {
+        var bytes: [16]u8 = .{0} ** 16;
+        var groups: [8]u16 = .{0} ** 8;
+        var group_i: usize = 0;
+        var double_colon: bool = false;
+        var i: usize = 0;
+
+        if (host.len >= 2 and host[0] == ':' and host[1] == ':') {
+            double_colon = true;
+            i = 2;
+        } else if (host.len > 0 and host[0] == ':') {
+            return error.InvalidCharacter;
+        }
+
+        while (i < host.len and group_i < 8) {
+            var val: u16 = 0;
+            var digits: usize = 0;
+            while (i < host.len and host[i] != ':') : (i += 1) {
+                val <<= 4;
+                val += switch (host[i]) {
+                    '0'...'9' => @as(u16, host[i] - '0'),
+                    'a'...'f' => @as(u16, host[i] - 'a' + 10),
+                    'A'...'F' => @as(u16, host[i] - 'A' + 10),
+                    else => return error.InvalidCharacter,
+                };
+                digits += 1;
+                if (digits > 4) return error.InvalidCharacter;
+            }
+            groups[group_i] = val;
+            group_i += 1;
+            if (i < host.len) {
+                if (double_colon) return error.InvalidCharacter;
+                i += 1;
+                if (i < host.len and host[i] == ':') {
+                    double_colon = true;
+                    i += 1;
+                }
+            }
+        }
+
+        var target_i: usize = 0;
+        if (double_colon) {
+            const before = group_i;
+            for (0..before) |j| {
+                const g = groups[j];
+                bytes[target_i * 2] = @as(u8, @intCast(g >> 8));
+                bytes[target_i * 2 + 1] = @as(u8, @intCast(g & 0xFF));
+                target_i += 1;
+            }
+            target_i = 8 - (group_i - before);
+            for (before..group_i) |j| {
+                const g = groups[j];
+                bytes[target_i * 2] = @as(u8, @intCast(g >> 8));
+                bytes[target_i * 2 + 1] = @as(u8, @intCast(g & 0xFF));
+                target_i += 1;
+            }
+        } else {
+            for (0..group_i) |j| {
+                const g = groups[j];
+                bytes[target_i * 2] = @as(u8, @intCast(g >> 8));
+                bytes[target_i * 2 + 1] = @as(u8, @intCast(g & 0xFF));
+                target_i += 1;
+            }
+        }
+
+        return initIp6(bytes, port, 0, 0);
+    }
+
+    pub fn toPyAddr(self: Address) !PyObject {
+        switch (self.any.family) {
+            std.posix.AF.INET => {
+                const sa = self.in.sa;
+                var buf: [16]u8 = undefined;
+                const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET, &sa.addr, &buf, 16) orelse return error.SystemResources;
+                const host_len = std.mem.len(host_ptr);
+                const port = self.getPort();
+
+                const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
+                defer python_c.py_decref(py_host);
+                const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
+                defer python_c.py_decref(py_port);
+                return python_c.PyTuple_Pack(2, py_host, py_port) orelse error.PythonError;
+            },
+            std.posix.AF.INET6 => {
+                const sa = self.in6.sa;
+                var buf: [46]u8 = undefined;
+                const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET6, &sa.addr, &buf, 46) orelse return error.SystemResources;
+                const host_len = std.mem.len(host_ptr);
+                const port = self.getPort();
+
+                const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
+                defer python_c.py_decref(py_host);
+                const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
+                defer python_c.py_decref(py_port);
+
+                const py_flow = python_c.PyLong_FromUnsignedLongLong(sa.flowinfo) orelse return error.PythonError;
+                defer python_c.py_decref(py_flow);
+                const py_scope = python_c.PyLong_FromUnsignedLongLong(sa.scope_id) orelse return error.PythonError;
+                defer python_c.py_decref(py_scope);
+
+                return python_c.PyTuple_Pack(4, py_host, py_port, py_flow, py_scope) orelse error.PythonError;
+            },
+            std.posix.AF.UNIX => {
+                const sa = self.un;
+                const path = std.mem.span(@as([*:0]const u8, @ptrCast(&sa.path)));
+                return python_c.PyUnicode_FromStringAndSize(path.ptr, @intCast(path.len)) orelse error.PythonError;
+            },
+            else => return error.UnsupportedAddressFamily,
+        }
+    }
+
+    pub fn toPyAddrWithPort(self: Address, port: u16) !PyObject {
+        switch (self.any.family) {
+            std.posix.AF.INET => {
+                const sa = self.in.sa;
+                var buf: [16]u8 = undefined;
+                const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET, &sa.addr, &buf, 16) orelse return error.SystemResources;
+                const host_len = std.mem.len(host_ptr);
+
+                const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
+                defer python_c.py_decref(py_host);
+                const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
+                defer python_c.py_decref(py_port);
+                return python_c.PyTuple_Pack(2, py_host, py_port) orelse error.PythonError;
+            },
+            std.posix.AF.INET6 => {
+                const sa = self.in6.sa;
+                var buf: [46]u8 = undefined;
+                const host_ptr = python_c._c.inet_ntop(std.posix.AF.INET6, &sa.addr, &buf, 46) orelse return error.SystemResources;
+                const host_len = std.mem.len(host_ptr);
+
+                const py_host = python_c.PyUnicode_FromStringAndSize(host_ptr, @intCast(host_len)) orelse return error.PythonError;
+                defer python_c.py_decref(py_host);
+                const py_port = python_c.PyLong_FromLong(port) orelse return error.PythonError;
+                defer python_c.py_decref(py_port);
+
+                const py_flow = python_c.PyLong_FromUnsignedLongLong(sa.flowinfo) orelse return error.PythonError;
+                defer python_c.py_decref(py_flow);
+                const py_scope = python_c.PyLong_FromUnsignedLongLong(sa.scope_id) orelse return error.PythonError;
+                defer python_c.py_decref(py_scope);
+
+                return python_c.PyTuple_Pack(4, py_host, py_port, py_flow, py_scope) orelse error.PythonError;
+            },
+            std.posix.AF.UNIX => {
+                const sa = self.un;
+                const path = std.mem.span(@as([*:0]const u8, @ptrCast(&sa.path)));
+                return python_c.PyUnicode_FromStringAndSize(path.ptr, @intCast(path.len)) orelse error.PythonError;
+            },
+            else => return error.UnsupportedAddressFamily,
+        }
+    }
+
+    pub fn fromPyAddr(py_addr: PyObject, family: ?i32) !Address {
+        if (python_c.unicode_check(py_addr)) {
+            var size: python_c.Py_ssize_t = 0;
+            const ptr = python_c.PyUnicode_AsUTF8AndSize(py_addr, &size) orelse return error.PythonError;
+            const path = ptr[0..@intCast(size)];
+            if (path.len >= 108) return error.NameTooLong;
+
+            var sun: std.posix.sockaddr.un = undefined;
+            @memset(std.mem.asBytes(&sun), 0);
+            sun.family = std.posix.AF.UNIX;
+            @memcpy(sun.path[0..path.len], path);
+            sun.path[path.len] = 0;
+            return .{ .un = sun };
+        }
+
+        if (python_c.PyTuple_Check(py_addr) <= 0) return error.PythonError;
+        const py_size = python_c.PyTuple_Size(py_addr);
+
+        const py_host = python_c.PyTuple_GetItem(py_addr, 0) orelse return error.PythonError;
+        const py_port = python_c.PyTuple_GetItem(py_addr, 1) orelse return error.PythonError;
+
+        var host_size: python_c.Py_ssize_t = 0;
+        const host_ptr = python_c.PyUnicode_AsUTF8AndSize(py_host, &host_size) orelse return error.PythonError;
+        const host = host_ptr[0..@intCast(host_size)];
+        const port: u16 = @intCast(python_c.PyLong_AsInt(py_port));
+
+        if (py_size == 2) {
+            if (family == std.posix.AF.INET6 or std.mem.indexOfScalar(u8, host, ':') != null) {
+                return Address.parseIp6(host, port);
+            } else {
+                return Address.parseIp4(host, port);
+            }
+        } else if (py_size == 4) {
+            const py_flow = python_c.PyTuple_GetItem(py_addr, 2) orelse return error.PythonError;
+            const py_scope = python_c.PyTuple_GetItem(py_addr, 3) orelse return error.PythonError;
+
+            const flowinfo: u32 = @intCast(python_c.PyLong_AsUnsignedLong(py_flow));
+            const scope_id: u32 = @intCast(python_c.PyLong_AsUnsignedLong(py_scope));
+
+            var addr = try Address.parseIp6(host, port);
+            addr.in6.sa.flowinfo = flowinfo;
+            addr.in6.sa.scope_id = scope_id;
+            return addr;
+        }
+
+        return error.InvalidAddress;
+    }
+};
+
+const PosixAddress = struct {
+    pub const IN = extern struct {
+        sa: std.posix.sockaddr.in,
+    };
+    pub const IN6 = extern struct {
+        sa: std.posix.sockaddr.in6,
+    };
+};

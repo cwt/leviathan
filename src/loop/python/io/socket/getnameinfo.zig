@@ -15,7 +15,7 @@ const Parsers = @import("../../../dns/parsers.zig");
 const GetNameInfoData = struct {
     future: *FutureObject,
     loop: *LoopObject,
-    addr: std.net.Address,
+    addr: utils.Address,
     flags: i32,
     allocator: std.mem.Allocator,
 
@@ -81,7 +81,7 @@ inline fn z_loop_getnameinfo(self: *LoopObject, args: []const ?PyObject) !*Futur
     const py_addr = args[0].?;
     const flags: i32 = if (args.len > 1) @intCast(python_c.PyLong_AsLong(args[1].?)) else 0;
 
-    const addr = try utils.Address.from_py_addr(py_addr, null);
+    const addr = try utils.Address.fromPyAddr(py_addr, null);
 
     const loop_data = utils.get_data_ptr(Loop, self);
     const alloc = loop_data.allocator;

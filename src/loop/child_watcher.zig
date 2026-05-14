@@ -31,7 +31,7 @@ pub fn deinit(self: *ChildWatcher) void {
             _ = self.loop.io.queue(.{ .Cancel = handler.task_id }) catch {};
         }
         if (handler.pidfd >= 0) {
-            std.posix.close(handler.pidfd);
+            _ = std.os.linux.close(handler.pidfd);
         }
         python_c.py_decref(handler.callback);
         self.loop.allocator.destroy(handler);
@@ -49,7 +49,7 @@ pub fn add_child_handler(self: *ChildWatcher, pid: i32, callback: PyObject) !voi
         }
         return error.SystemResources;
     }
-    errdefer std.posix.close(pidfd);
+    errdefer _ = std.os.linux.close(pidfd);
 
     const handler = try self.loop.allocator.create(ChildHandler);
     errdefer self.loop.allocator.destroy(handler);
@@ -82,7 +82,7 @@ pub fn remove_child_handler(self: *ChildWatcher, pid: i32) bool {
             _ = self.loop.io.queue(.{ .Cancel = handler.task_id }) catch {};
         }
         if (handler.pidfd >= 0) {
-            std.posix.close(handler.pidfd);
+            _ = std.os.linux.close(handler.pidfd);
         }
         python_c.py_decref(handler.callback);
         self.loop.allocator.destroy(handler);
@@ -101,7 +101,7 @@ fn on_child_exit(data: *const CallbackManager.CallbackData) !void {
 
     // Get exit status
     var siginfo: std.os.linux.siginfo_t = undefined;
-    const res = std.os.linux.waitid(.PIDFD, handler.pidfd, &siginfo, std.os.linux.W.EXITED | std.os.linux.W.NOHANG);
+    const res = std.os.linux.waitid(.PIDFD, handler.pidfd, &siginfo, std.os.linux.W.EXITED | std.os.linux.W.NOHANG, null);
     
     if (res != 0) {
         // Process might still be alive (though POLLIN triggered)?
@@ -147,7 +147,7 @@ fn on_child_exit(data: *const CallbackManager.CallbackData) !void {
 
     // Cleanup handler
     _ = self.handlers.remove(handler.pid);
-    std.posix.close(handler.pidfd);
+    _ = std.os.linux.close(handler.pidfd);
     python_c.py_decref(handler.callback);
     self.loop.allocator.destroy(handler);
 }

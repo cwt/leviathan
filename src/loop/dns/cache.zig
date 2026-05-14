@@ -5,9 +5,15 @@ const utils = @import("utils");
 const Resolv = @import("resolv.zig");
 const CallbackManager = @import("callback_manager");
 
+pub fn timestamp() i64 {
+    var ts: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(.REALTIME, &ts);
+    return @as(i64, @intCast(ts.sec));
+}
+
 const RecordState = union(enum) {
     pending: *Resolv.ControlData,
-    resolved: []std.net.Address,
+    resolved: []utils.Address,
     ptr: []u8,
     none,
 };
@@ -17,7 +23,7 @@ pub const Record = struct {
     state: RecordState,
     expire_at: i64,
 
-    pub inline fn get_address_list(self: *Record) ?[]const std.net.Address {
+    pub inline fn get_address_list(self: *Record) ?[]const utils.Address {
         return switch (self.state) {
             .pending => null,
             .resolved => |d| d,
@@ -34,10 +40,10 @@ pub const Record = struct {
         try control_data.user_callbacks.append(control_data.arena.allocator(), user_callback.*);
     }
 
-    pub inline fn set_resolved_data(self: *Record, address_list: []std.net.Address, ttl: u32) void {
+    pub inline fn set_resolved_data(self: *Record, address_list: []utils.Address, ttl: u32) void {
         var expire_at: i64 = std.math.maxInt(i64);
         if (ttl < std.math.maxInt(u32)) {
-            expire_at = std.time.timestamp() + ttl;
+            expire_at = timestamp() + ttl;
         }
 
         self.expire_at = expire_at;
@@ -49,7 +55,7 @@ pub const Record = struct {
     pub inline fn set_ptr_data(self: *Record, hostname: []u8, ttl: u32) void {
         var expire_at: i64 = std.math.maxInt(i64);
         if (ttl < std.math.maxInt(u32)) {
-            expire_at = std.time.timestamp() + ttl;
+            expire_at = timestamp() + ttl;
         }
 
         self.expire_at = expire_at;
@@ -115,7 +121,7 @@ pub fn create_new_record(self: *Cache, hostname: []const u8, control_data: *Reso
 pub fn create_new_record_from_resolved(
     self: *Cache,
     hostname: []const u8,
-    address_list: []std.net.Address,
+    address_list: []utils.Address,
     ttl: u32,
 ) !*Record {
     const allocator = self.allocator;
@@ -124,7 +130,11 @@ pub fn create_new_record_from_resolved(
 
     var expire_at: i64 = std.math.maxInt(i64);
     if (ttl < std.math.maxInt(u32)) {
-        expire_at = std.time.timestamp() + @as(i64, @intCast(ttl));
+        var ts: std.os.linux.timespec = undefined;
+        const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
+        if (@as(i32, @intCast(rc)) >= 0) {
+            expire_at = @as(i64, @intCast(ts.sec)) + @as(i64, @intCast(ttl));
+        }
     }
 
     const record = try allocator.create(Record);
@@ -143,7 +153,7 @@ pub fn create_new_record_from_resolved(
 }
 
 pub fn get(self: *Cache, hostname: []const u8) ?*Record {
-    const current_time = std.time.timestamp();
+    const current_time = timestamp();
 
     if (self.cache.get(hostname)) |record| {
         if (record.expire_at < current_time) {
@@ -180,9 +190,9 @@ test "set_resolved_data" {
 
     const record = try cache.create_new_record("example.com", undefined);
 
-    const addresses = try testing.allocator.alloc(std.net.Address, 2);
-    addresses[0] = std.net.Address.initIp4(.{8, 8, 8, 8}, 53);
-    addresses[1] = std.net.Address.initIp4(.{1, 1, 1, 1}, 53);
+    const addresses = try testing.allocator.alloc(utils.Address, 2);
+    addresses[0] = utils.Address.initIp4(.{8, 8, 8, 8}, 53);
+    addresses[1] = utils.Address.initIp4(.{1, 1, 1, 1}, 53);
 
     record.set_resolved_data(addresses, 300);
 
@@ -190,7 +200,7 @@ test "set_resolved_data" {
     try testing.expectEqual(@as(usize, 2), record.get_address_list().?.len);
     try testing.expectEqual(std.posix.AF.INET, record.get_address_list().?[0].any.family);
     try testing.expectEqual(std.posix.AF.INET, record.get_address_list().?[1].any.family);
-    try testing.expect(record.expire_at > std.time.timestamp());
+    try testing.expect(record.expire_at > timestamp());
 }
 
 test "get record from cache" {
@@ -200,9 +210,9 @@ test "get record from cache" {
 
     const record = try cache.create_new_record("example.com", undefined);
 
-    const addresses = try testing.allocator.alloc(std.net.Address, 2);
-    addresses[0] = std.net.Address.initIp4(.{8, 8, 8, 8}, 53);
-    addresses[1] = std.net.Address.initIp4(.{1, 1, 1, 1}, 53);
+    const addresses = try testing.allocator.alloc(utils.Address, 2);
+    addresses[0] = utils.Address.initIp4(.{8, 8, 8, 8}, 53);
+    addresses[1] = utils.Address.initIp4(.{1, 1, 1, 1}, 53);
 
     record.set_resolved_data(addresses, 300);
 
@@ -219,9 +229,9 @@ test "get expired record" {
 
     const record = try cache.create_new_record("example.com", undefined);
 
-    const addresses = try testing.allocator.alloc(std.net.Address, 2);
-    addresses[0] = std.net.Address.initIp4(.{8, 8, 8, 8}, 53);
-    addresses[1] = std.net.Address.initIp4(.{1, 1, 1, 1}, 53);
+    const addresses = try testing.allocator.alloc(utils.Address, 2);
+    addresses[0] = utils.Address.initIp4(.{8, 8, 8, 8}, 53);
+    addresses[1] = utils.Address.initIp4(.{1, 1, 1, 1}, 53);
 
     record.set_resolved_data(addresses, 0);  // Immediately expire
     record.expire_at = 0;  // Force expiration

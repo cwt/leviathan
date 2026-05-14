@@ -179,9 +179,8 @@ fn stream_init_configuration(
     self.fd = fd;
     
     var family: i32 = undefined;
-    _ = std.posix.getsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.DOMAIN, std.mem.asBytes(&family)) catch {
-        family = std.posix.AF.UNSPEC;
-    };
+    var optlen: std.posix.socklen_t = @sizeOf(i32);
+    _ = std.os.linux.getsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.DOMAIN, @as([*]u8, @ptrCast(&family)), &optlen);
     self.family = family;
 
     try Read.queue_read_operation(self, read_transport_data, protocol_type);

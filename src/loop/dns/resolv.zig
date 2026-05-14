@@ -1,4 +1,5 @@
 const std = @import("std");
+const utils = @import("utils");
 
 const Loop = @import("../main.zig");
 const CallbackManager = @import("callback_manager");
@@ -72,7 +73,7 @@ const ServerQueryData = struct {
     payload_len: usize,
     payload_offset: usize = 0,
 
-    results: std.ArrayList(std.net.Address),
+    results: std.ArrayList(utils.Address),
     ptr_results: std.ArrayList([]u8),
     results_to_process: u16 = 0,
 
@@ -82,7 +83,7 @@ const ServerQueryData = struct {
     pub inline fn cancel(self: *ServerQueryData) void {
         const socket_fd = self.socket_fd;
         if (socket_fd >= 0) {
-            std.posix.close(socket_fd);
+            _ = std.os.linux.close(socket_fd);
             self.socket_fd = -1;
         }
     }
@@ -178,7 +179,7 @@ fn mark_resolved_and_execute_user_callbacks(server_data: *ServerQueryData) !void
         const ptr_name = try control_data.allocator.dupe(u8, server_data.ptr_results.items[0]);
         control_data.record.set_ptr_data(ptr_name, server_data.min_ttl);
     } else {
-        const address_list = try control_data.allocator.dupe(std.net.Address, server_data.results.items);
+        const address_list = try control_data.allocator.dupe(utils.Address, server_data.results.items);
         control_data.record.set_resolved_data(address_list, server_data.min_ttl);
     }
 
@@ -265,7 +266,7 @@ fn skip_name(data: []const u8, initial_offset: usize) ?usize {
     return null;
 }
 
-fn parse_individual_dns_result(full_data: []const u8, initial_offset: usize, result: *std.net.Address, ptr_name: *?[]u8, ttl: *u32, allocator: std.mem.Allocator) ?usize {
+fn parse_individual_dns_result(full_data: []const u8, initial_offset: usize, result: *utils.Address, ptr_name: *?[]u8, ttl: *u32, allocator: std.mem.Allocator) ?usize {
     var offset = skip_name(full_data, initial_offset) orelse return null;
 
     if ((offset + 10) > full_data.len) return null;
@@ -285,14 +286,14 @@ fn parse_individual_dns_result(full_data: []const u8, initial_offset: usize, res
                 if (offset + 4 > full_data.len) return null;
                 var addr: [4]u8 = undefined;
                 @memcpy(&addr, full_data[offset..(offset + 4)]);
-                result.* = std.net.Address.initIp4(addr, 0);
+                result.* = utils.Address.initIp4(addr, 0);
                 ttl.* = r_ttl;
             },
             28 => { // AAAA
                 if (offset + 16 > full_data.len) return null;
                 var addr: [16]u8 = undefined;
                 @memcpy(&addr, full_data[offset..(offset + 16)]);
-                result.* = std.net.Address.initIp6(addr, 0, 0, 0);
+                result.* = utils.Address.initIp6(addr, 0, 0, 0);
                 ttl.* = r_ttl;
             },
             12 => { // PTR
@@ -367,7 +368,7 @@ fn process_dns_response(data: *const CallbackManager.CallbackData) !void {
                 }
             },
             .process_body => while (results_to_process > 0) {
-                var result: std.net.Address = undefined;
+                var result: utils.Address = undefined;
                 var ptr_name: ?[]u8 = null;
                 var ttl: u32 = std.math.maxInt(u32);
 
@@ -437,17 +438,20 @@ fn build_queries(
     server_data: *ServerQueryData,
     ipv6_supported: bool,
     hostnames_array: HostnamesArray,
-    server_address: *const std.net.Address,
+    server_address: *const utils.Address,
     question_type: ?QuestionType,
 ) !void {
-    const socket_fd = try std.posix.socket(
+    const socket_ret = std.os.linux.socket(
         server_address.any.family,
         std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
-        std.posix.IPPROTO.UDP,
+        std.os.linux.IPPROTO.UDP,
     );
-    errdefer std.posix.close(socket_fd);
+    if (@as(i32, @intCast(socket_ret)) < 0) return error.SystemResources;
+    const socket_fd: std.posix.fd_t = @intCast(socket_ret);
+    errdefer _ = std.os.linux.close(socket_fd);
 
-    try std.posix.connect(socket_fd, &server_address.any, server_address.getOsSockLen());
+    const connect_ret = std.os.linux.connect(socket_fd, @ptrCast(&server_address.any), server_address.getOsSockLen());
+    if (@as(i32, @intCast(connect_ret)) < 0) return error.SystemResources;
 
     const payload = try allocator.alloc(u8, (1 + @as(usize, @intFromBool(ipv6_supported))) * 512 * hostnames_array.len);
     errdefer allocator.free(payload);
@@ -476,8 +480,8 @@ fn build_queries(
         .control_data = control_data,
         .hostnames_array = hostnames_array,
 
-        .results = .{},
-        .ptr_results = .{},
+        .results = .{ .items = &.{}, .capacity = 0 },
+        .ptr_results = .{ .items = &.{}, .capacity = 0 },
     };
 }
 
@@ -542,7 +546,7 @@ fn prepare_data(
     control_data.loop = loop;
     const arena_allocator = control_data.arena.allocator();
 
-    control_data.user_callbacks = .{};
+    control_data.user_callbacks = .{ .items = &.{}, .capacity = 0 };
     control_data.record = try cache_slot.create_new_record(hostname, control_data);
 
     control_data.resolved = false;
@@ -568,7 +572,7 @@ fn prepare_data(
     var queries_built: usize = 0;
     errdefer {
         for (queries_data[0..queries_built]) |*server_data| {
-            std.posix.close(server_data.socket_fd);
+            _ = std.os.linux.close(server_data.socket_fd);
         }
     }
 
@@ -659,7 +663,7 @@ test "skip_name: mixed labels and pointer" {
 
 test "parse_individual_dns_result: A record" {
     const data = "\xC0\x0C\x00\x01\x00\x01\x00\x00\x01\x2C\x00\x04\xD8\x3A\xD3\xA4";
-    var res: std.net.Address = undefined;
+    var res: utils.Address = undefined;
     var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
 
@@ -672,7 +676,7 @@ test "parse_individual_dns_result: A record" {
 
 test "parse_individual_dns_result: AAAA record" {
     const data = "\xC0\x0C\x00\x1C\x00\x01\x00\x00\x01\x2C\x00\x10\x2A\x00\x14\x50\x40\x01\x08\x03\x00\x00\x00\x00\x00\x00\x20\x0E";
-    var res: std.net.Address = undefined;
+    var res: utils.Address = undefined;
     var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
 
@@ -698,7 +702,7 @@ test "skip_name: malformed" {
 
 test "parse_individual_dns_result: truncated record" {
     const data = "\xC0\x0C\x00\x01\x00\x01\x00\x00\x01\x2C\x00\x04\xD8\x3A";
-    var res: std.net.Address = undefined;
+    var res: utils.Address = undefined;
     var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
     
@@ -707,7 +711,7 @@ test "parse_individual_dns_result: truncated record" {
 
 test "parse_individual_dns_result: skip non-IN class" {
     const data = "\xC0\x0C\x00\x01\x00\x02\x00\x00\x01\x2C\x00\x04\xD8\x3A\xD3\xA4";
-    var res: std.net.Address = undefined;
+    var res: utils.Address = undefined;
     var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
     
@@ -719,7 +723,7 @@ test "parse_individual_dns_result: skip non-IN class" {
 test "parse_individual_dns_result: ignore CNAME" {
     // Type 5 is CNAME
     const data = "\xC0\x0C\x00\x05\x00\x01\x00\x00\x01\x2C\x00\x02\xC0\x12";
-    var res: std.net.Address = undefined;
+    var res: utils.Address = undefined;
     var ptr_name: ?[]u8 = null;
     var ttl: u32 = 0;
     

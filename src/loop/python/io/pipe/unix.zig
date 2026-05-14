@@ -47,7 +47,7 @@ fn unix_connect_callback(data: *const CallbackManager.CallbackData) !void {
 
     defer {
         if (ucd.socket_fd >= 0) {
-            std.posix.close(ucd.socket_fd);
+            _ = std.os.linux.close(ucd.socket_fd);
         }
         python_c.py_decref(ucd.protocol_factory);
         python_c.py_decref(@ptrCast(ucd.future));
@@ -136,7 +136,7 @@ inline fn z_loop_create_unix_connection(
         .loop = python_c.py_newref(self),
         .protocol_factory = python_c.py_newref(protocol_factory),
         .allocator = loop_data.allocator,
-        .addr = (try utils.Address.from_py_addr(py_path, std.posix.AF.UNIX)).un,
+        .addr = (try utils.Address.fromPyAddr(py_path, std.posix.AF.UNIX)).un,
     };
     errdefer {
         python_c.py_decref(@as(PyObject, @ptrCast(ucd.future)));
@@ -144,9 +144,11 @@ inline fn z_loop_create_unix_connection(
         python_c.py_decref(ucd.protocol_factory);
     }
 
-    const fd = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC, 0);
+    const fd_ret = std.os.linux.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC, 0);
+    if (@as(i32, @intCast(fd_ret)) < 0) return error.SystemResources;
+    const fd: std.posix.fd_t = @intCast(fd_ret);
     ucd.socket_fd = fd;
-    errdefer std.posix.close(fd);
+    errdefer _ = std.os.linux.close(fd);
 
     _ = try Loop.Scheduling.IO.queue(
         &loop_data.io, .{
@@ -201,18 +203,22 @@ const fut = try Future.Python.Constructors.fast_new_future(self);
 
 const backlog: c_int = if (py_backlog) |b| @intCast(python_c.PyLong_AsInt(b)) else 100;
 
-const fd = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0);
-errdefer std.posix.close(fd);
+const fd_ret = std.os.linux.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0);
+if (@as(i32, @intCast(fd_ret)) < 0) return error.SystemResources;
+const fd: std.posix.fd_t = @intCast(fd_ret);
+errdefer _ = std.os.linux.close(fd);
 
-const addr = try utils.Address.from_py_addr(py_path, std.posix.AF.UNIX);
+const addr = try utils.Address.fromPyAddr(py_path, std.posix.AF.UNIX);
 
 // Unlink existing socket file before bind
-std.posix.unlink(std.mem.span(@as([*:0]const u8, @ptrCast(&addr.un.path)))) catch {};
+_ = std.os.linux.unlink(std.mem.span(@as([*:0]const u8, @ptrCast(&addr.un.path))));
 
-try std.posix.bind(fd, &addr.any, addr.getOsSockLen());
-errdefer std.posix.close(fd);
+const bind_rc = std.os.linux.bind(fd, @ptrCast(&addr.any), addr.getOsSockLen());
+if (@as(i32, @intCast(bind_rc)) < 0) return error.SystemResources;
+errdefer _ = std.os.linux.close(fd);
 
-try std.posix.listen(fd, @intCast(backlog));
+const listen_rc = std.os.linux.listen(fd, @as(u32, @intCast(backlog)));
+if (@as(i32, @intCast(listen_rc)) < 0) return error.SystemResources;
 
 
     // Create server transport

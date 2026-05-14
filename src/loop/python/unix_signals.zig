@@ -1,3 +1,4 @@
+const std = @import("std");
 const python_c = @import("python_c");
 const PyObject = *python_c.PyObject;
 
@@ -71,7 +72,7 @@ inline fn z_loop_add_signal_handler(
         return error.PythonError;
     }
 
-    try loop_data.unix_signals.link(@intCast(sig), CallbackManager.Callback{
+    try loop_data.unix_signals.link(@as(std.os.linux.SIG, @enumFromInt(sig)), CallbackManager.Callback{
         .func = &Handle.callback_for_python_generic_callbacks,
         .cleanup = &Handle.release_python_generic_callback,
         .data = .{
@@ -107,7 +108,7 @@ pub fn loop_remove_signal_handler(
     mutex.lock();
     defer mutex.unlock();
 
-    loop_data.unix_signals.unlink(@intCast(sig)) catch |err| {
+    loop_data.unix_signals.unlink(@as(std.os.linux.SIG, @enumFromInt(sig))) catch |err| {
         if (err == error.KeyNotFound) {
             return python_c.get_py_false();
         }

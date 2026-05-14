@@ -10,7 +10,7 @@ const SendToData = struct {
     alloc: std.mem.Allocator,
     transport: *DatagramTransport.DatagramTransportObject,
     buf: []u8,
-    address: std.net.Address,
+    address: utils.Address,
     msg: std.posix.msghdr_const,
     iov: std.posix.iovec_const,
 };
@@ -126,11 +126,11 @@ pub fn z_datagram_sendto(self: *DatagramTransport.DatagramTransportObject, args:
         if (self.fd >= 0) {
             var storage: std.posix.sockaddr.storage = undefined;
             var addrlen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);
-            std.posix.getsockname(self.fd, @ptrCast(&storage), &addrlen) catch {};
+            _ = std.os.linux.getsockname(self.fd, @ptrCast(&storage), &addrlen);
             family = storage.family;
         }
 
-        sd.address = try utils.Address.from_py_addr(py_addr, family);
+        sd.address = try utils.Address.fromPyAddr(py_addr, family);
         sd.msg.name = &sd.address.any;
         sd.msg.namelen = sd.address.getOsSockLen();
     }

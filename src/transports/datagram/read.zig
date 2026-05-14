@@ -109,11 +109,11 @@ fn read_completed(data: *const CallbackManager.CallbackData) !void {
             switch (storage.family) {
                 std.posix.AF.INET => {
                     const sa: *const std.posix.sockaddr.in = @ptrCast(storage);
-                    break :blk utils.Address.to_py_addr(std.net.Address.initIp4(@as([4]u8, @bitCast(sa.addr)), std.mem.bigToNative(u16, sa.port))) catch null;
+                    break :blk utils.Address.toPyAddr(utils.Address.initIp4(@as([4]u8, @bitCast(sa.addr)), std.mem.bigToNative(u16, sa.port))) catch null;
                 },
                 std.posix.AF.INET6 => {
                     const sa: *const std.posix.sockaddr.in6 = @ptrCast(storage);
-                    break :blk utils.Address.to_py_addr(std.net.Address.initIp6(sa.addr, std.mem.bigToNative(u16, sa.port), sa.flowinfo, sa.scope_id)) catch null;
+                    break :blk utils.Address.toPyAddr(utils.Address.initIp6(sa.addr, std.mem.bigToNative(u16, sa.port), sa.flowinfo, sa.scope_id)) catch null;
                 },
                 else => break :blk null,
             }

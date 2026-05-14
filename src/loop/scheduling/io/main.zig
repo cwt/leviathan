@@ -323,10 +323,12 @@ pub fn init(self: *IO, loop: *Loop, allocator: std.mem.Allocator) !void {
     self.ring = try std.os.linux.IoUring.init(TotalTasksItems, 0);
     errdefer self.ring.deinit();
 
-    _ = std.posix.fcntl(self.ring.fd, std.posix.F.SETFD, @intCast(std.posix.FD_CLOEXEC)) catch {};
+    _ = std.os.linux.fcntl(self.ring.fd, std.posix.F.SETFD, @intCast(std.posix.FD_CLOEXEC));
 
-    self.eventfd = try std.posix.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
-    errdefer std.posix.close(self.eventfd);
+    const eventfd_ret = std.os.linux.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
+    if (@as(i32, @intCast(eventfd_ret)) < 0) return error.SystemResources;
+    self.eventfd = @intCast(eventfd_ret);
+    errdefer _ = std.os.linux.close(self.eventfd);
 
     self.blocking_ready_tasks = try allocator.alloc(std.os.linux.io_uring_cqe, TotalTasksItems);
     errdefer allocator.free(self.blocking_ready_tasks);
@@ -356,7 +358,7 @@ pub fn register_eventfd_callback(self: *IO) !void {
 
 pub fn wakeup_eventfd(self: *IO) !void {
     const val: u64 = 1;
-    _ = try std.posix.write(self.eventfd, @as([*]const u8, @ptrCast(&val))[0..@sizeOf(u64)]);
+    _ = std.os.linux.write(self.eventfd, @as([*]const u8, @ptrCast(&val)), @sizeOf(u64));
 }
 
 pub fn traverse(self: *const IO, visit: python_c.visitproc, arg: ?*anyopaque) c_int {
@@ -387,7 +389,7 @@ pub fn deinit(self: *IO) void {
     
     self.ring.deinit();
     self.busy_sets.allocator.free(self.blocking_ready_tasks);
-    std.posix.close(self.eventfd);
+    _ = std.os.linux.close(self.eventfd);
 }
 
 pub fn get_blocking_tasks_set(self: *IO) !*BlockingTasksSet {

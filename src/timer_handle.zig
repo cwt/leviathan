@@ -70,7 +70,7 @@ inline fn z_timer_handle_init(
     const ts_sec = @trunc(ts);
     self.when = .{
         .sec = @intFromFloat(ts_sec),
-        .nsec = @as(@FieldType(std.posix.timespec, "nsec"), @intFromFloat((ts - ts_sec) * std.time.ns_per_s))
+        .nsec = @as(@FieldType(std.posix.timespec, "nsec"), @intFromFloat((ts - ts_sec) * 1_000_000_000))
     };
 
     return 0;
@@ -82,7 +82,7 @@ fn handle_init(self: ?*PythonTimerHandleObject, args: ?PyObject, kwargs: ?PyObje
 
 pub fn timer_handle_when(self: ?*PythonTimerHandleObject, _: ?PyObject) callconv(.c) ?PyObject {
     const time = self.?.when;
-    const when = @as(f64, @floatFromInt(time.sec)) + @as(f64, @floatFromInt(time.nsec)) / std.time.ns_per_s;
+    const when = @as(f64, @floatFromInt(time.sec)) + @as(f64, @floatFromInt(time.nsec)) / 1_000_000_000;
     return python_c.PyFloat_FromDouble(when);
 }
 

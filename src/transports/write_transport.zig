@@ -72,11 +72,11 @@ pub fn init(
     const busy_py_objects = try allocator.create(PyBuffersArrayList);
     errdefer allocator.destroy(busy_py_objects);
 
-    free_buffers.* = .{};
-    busy_buffers.* = .{};
+    free_buffers.* = .{ .items = &.{}, .capacity = 0 };
+    busy_buffers.* = .{ .items = &.{}, .capacity = 0 };
 
-    free_py_objects.* = .{};
-    busy_py_objects.* = .{};
+    free_py_objects.* = .{ .items = &.{}, .capacity = 0 };
+    busy_py_objects.* = .{ .items = &.{}, .capacity = 0 };
 
     self.* = WriteTransport{
         .loop = loop,

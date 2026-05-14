@@ -3,7 +3,8 @@ pub const BTree = @import("btree.zig").BTree;
 pub const PythonImports = @import("python_imports.zig");
 pub const PseudoSocket = @import("pseudosocket.zig");
 pub const LRUCache = @import("lru.zig").LRUCache;
-pub const Address = @import("address.zig");
+pub const address_mod = @import("address.zig");
+pub const Address = address_mod.Address;
 
 const std = @import("std");
 const builtin = @import("builtin");
