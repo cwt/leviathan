@@ -73,11 +73,18 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
             msghr.iov = &iovecs;
             msghr.iovlen = 1;
 
-            break :blk try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &msghr, std.posix.MSG.ZEROCOPY);
+            const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &msghr, std.posix.MSG.ZEROCOPY);
+            sqe.flags |= std.os.linux.IOSQE_ASYNC;
+            
+            // Immediate submit: msghr is on the stack.
+            const ret = try IO.submit_guaranteed(ring);
+            if (ret == 0) return error.SQENotSubmitted;
+            break :blk sqe;
         }
-        break :blk try ring.write(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
+        const sqe = try ring.write(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
+        sqe.flags |= std.os.linux.IOSQE_ASYNC;
+        break :blk sqe;
     };
-    sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
     if (data.timeout) |*timeout| {
         sqe.flags |= std.os.linux.IOSQE_IO_LINK;
@@ -99,11 +106,18 @@ pub fn perform_with_iovecs(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSe
             msghr.iov = data.data.ptr;
             msghr.iovlen = @intCast(data.data.len);
 
-            break :blk try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &msghr, std.posix.MSG.ZEROCOPY);
+            const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &msghr, std.posix.MSG.ZEROCOPY);
+            sqe.flags |= std.os.linux.IOSQE_ASYNC;
+
+            // Immediate submit: msghr is on the stack.
+            const ret = try IO.submit_guaranteed(ring);
+            if (ret == 0) return error.SQENotSubmitted;
+            break :blk sqe;
         }
-        break :blk try ring.writev(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
+        const sqe = try ring.writev(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
+        sqe.flags |= std.os.linux.IOSQE_ASYNC;
+        break :blk sqe;
     };
-    sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
     if (data.timeout) |*timeout| {
         sqe.flags |= std.os.linux.IOSQE_IO_LINK;

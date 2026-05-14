@@ -23,6 +23,14 @@ FAIL=0
 
 # ---- helpers ----
 
+ensure_test_cert() {
+    if [ ! -f /tmp/test_cert.pem ] || [ ! -f /tmp/test_key.pem ]; then
+        openssl req -x509 -newkey rsa:4096 -keyout /tmp/test_key.pem \
+            -out /tmp/test_cert.pem -days 365 -nodes \
+            -subj "/CN=localhost" 2>/dev/null
+    fi
+}
+
 clean() {
     rm -rf zig-out zig-cache .zig-cache .pytest_cache 2>/dev/null || true
     find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
@@ -114,6 +122,8 @@ run_std_tests() {
 }
 
 # ---- main ----
+
+ensure_test_cert
 
 echo "=== Leviathan Test Suite ==="
 echo ""

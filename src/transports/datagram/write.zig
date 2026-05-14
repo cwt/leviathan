@@ -90,6 +90,33 @@ pub fn z_datagram_sendto(self: *DatagramTransport.DatagramTransportObject, args:
 
     const loop_data = utils.get_data_ptr(Loop, @as(*Loop.Python.LoopObject, @ptrCast(self.loop.?)));
 
+    // Allocate storage on heap for both data and SendToData struct
+    const data_buf = try loop_data.allocator.alloc(u8, len);
+    errdefer loop_data.allocator.free(data_buf);
+    @memcpy(data_buf, @as([*]const u8, @ptrCast(pbuffer.buf))[0..len]);
+
+    const sd = try loop_data.allocator.create(SendToData);
+    errdefer loop_data.allocator.free(data_buf);
+    sd.* = .{
+        .alloc = loop_data.allocator,
+        .transport = self,
+        .buf = data_buf,
+        .address = undefined, // Only used if unconnected
+        .msg = undefined,
+        .iov = undefined,
+    };
+
+    sd.iov = .{ .base = data_buf.ptr, .len = data_buf.len };
+    sd.msg = .{
+        .name = null,
+        .namelen = 0,
+        .iov = @ptrCast(&sd.iov),
+        .iovlen = 1,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
     // Check if addr argument is provided (sendto with explicit destination)
     if (args.len > 1 and args[1] != null and !python_c.is_none(args[1].?)) {
         const py_addr = args[1].?;
@@ -103,64 +130,21 @@ pub fn z_datagram_sendto(self: *DatagramTransport.DatagramTransportObject, args:
             family = storage.family;
         }
 
-        const address = try utils.Address.from_py_addr(py_addr, family);
-        const data_buf = try loop_data.allocator.alloc(u8, len);
-        errdefer loop_data.allocator.free(data_buf);
-        @memcpy(data_buf, @as([*]const u8, @ptrCast(pbuffer.buf))[0..len]);
-
-        const sd = try loop_data.allocator.create(SendToData);
-        errdefer loop_data.allocator.free(data_buf);
-        sd.* = .{
-            .alloc = loop_data.allocator,
-            .transport = self,
-            .buf = data_buf,
-            .address = address,
-            .msg = undefined,
-            .iov = undefined,
-        };
-
-        sd.iov = .{ .base = data_buf.ptr, .len = data_buf.len };
-        sd.msg = .{
-            .name = &sd.address.any,
-            .namelen = sd.address.getOsSockLen(),
-            .iov = @ptrCast(&sd.iov),
-            .iovlen = 1,
-            .control = null,
-            .controllen = 0,
-            .flags = 0,
-        };
-
-        _ = try loop_data.io.queue(.{
-            .PerformSendMsg = .{
-                .fd = self.fd,
-                .msg = &sd.msg,
-                .callback = .{
-                    .func = &sendto_completed,
-                    .cleanup = null,
-                    .data = .{ .user_data = sd },
-                },
-                .flags = 0,
-            },
-        });
-
-        try buffer_watermark_check(self, len);
-        return python_c.get_py_none();
+        sd.address = try utils.Address.from_py_addr(py_addr, family);
+        sd.msg.name = &sd.address.any;
+        sd.msg.namelen = sd.address.getOsSockLen();
     }
 
-    // No addr — use writev (connected socket)
-    const iov = [1]std.posix.iovec_const{.{ .base = @ptrCast(pbuffer.buf.?), .len = len }};
     _ = try loop_data.io.queue(.{
-        .PerformWriteV = .{
+        .PerformSendMsg = .{
             .fd = self.fd,
-            .data = &iov,
+            .msg = &sd.msg,
             .callback = .{
-                .func = &write_completed,
+                .func = &sendto_completed,
                 .cleanup = null,
-                .data = .{ .user_data = self },
+                .data = .{ .user_data = sd },
             },
-            .offset = 0,
-            .timeout = null,
-            .zero_copy = false,
+            .flags = 0,
         },
     });
 
