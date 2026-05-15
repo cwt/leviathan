@@ -327,6 +327,48 @@ batches and are flushed together in `poll_blocking_events()` maximising each io_
 **Expected impact with Phases 2 + 3:** 0.4-0.6× → **1.5-3.0×** asyncio on all I/O benchmarks.
 Leviathan finally leverages io_uring's true advantage: batched submission + kernel-side dispatch.
 
+---
+
+## 🔴 PRIORITY 13: Subprocess — pidfd-Based Exit Notification (2026-05-15)
+
+### Root Cause of 0.23× Subprocess Performance
+
+Subprocess benchmark (0.23×, 4× slower than asyncio) is the worst-performing benchmark.
+
+**Current design:** `src/transports/subprocess/transport.zig` uses **timer-based polling** to detect child exit:
+
+```
+start_exit_watcher → queue WaitTimer(1ms)
+1ms later: wait4(pid, NOHANG) → process still starting (Python init ~10-30ms)
+5ms later: wait4 → still starting
+25ms later: wait4 → process exited → callback
+Total latency per process: ~31ms (polling overhead)
+```
+
+**asyncio approach:** Uses SIGCHLD signal handler. Kernel delivers the signal immediately when the child exits. Latency: microseconds.
+
+**Existing correct infrastructure:** `src/loop/child_watcher.zig:42-60` already implements the right approach:
+
+```
+pidfd_open(pid, 0) → queue WaitReadable(pidfd)
+pidfd becomes readable → kernel wakes io_uring → callback → waitid(.PIDFD)
+```
+
+The `child_watcher` is a separate mechanism from the subprocess transport and is NOT used by it. The transport re-implements its own slower polling-based watcher instead.
+
+### Fix: Port subprocess transport to pidfd + WaitReadable
+
+Replace the transport's `WaitTimer`+`wait4` polling loop with `pidfd_open`+`WaitReadable`+`waitid(.PIDFD)` — the same pattern `child_watcher` already uses. No periodic timers, no exponential backoff, no polling. The kernel notifies io_uring the instant the child exits.
+
+| # | Task | Files | Expected |
+|---|------|-------|:--------:|
+| 13.1 | Open pidfd in `new_with_pid` via `pidfd_open` syscall | `transport.zig` | |
+| 13.2 | Queue `WaitReadable` on pidfd instead of `WaitTimer` in `start_exit_watcher` | `transport.zig` | |
+| 13.3 | Rewrite `pidfd_exit_callback` to use `waitid(.PIDFD)` instead of `wait4` | `transport.zig` | |
+| 13.4 | Close pidfd in `subprocess_close` | `transport.zig` | |
+| 13.5 | Remove `poll_count` field and `pidfd_timer_duration` function | `transport.zig` | |
+| 13.6 | Run full test suite + benchmarks | All | **Expected: 0.23× → 0.8-1.2×** |
+
 ### Actual Impact (measured 2026-05-13)
 
 | Benchmark | Before (446) | After (448) | Change | Notes |
