@@ -236,7 +236,7 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
         mutex.unlock();
         defer mutex.lock();
 
-        try execute_hooks(&self.check_hooks);
+        if (self.check_hooks.len != 0) try execute_hooks(&self.check_hooks);
 
         const callbacks_executed = try call_once(
             ready_tasks_queue,
@@ -244,8 +244,8 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
             loop_obj
         );
 
-        try execute_hooks(&self.idle_hooks);
-        try execute_hooks(&self.prepare_hooks);
+        if (self.idle_hooks.len != 0) try execute_hooks(&self.idle_hooks);
+        if (self.prepare_hooks.len != 0) try execute_hooks(&self.prepare_hooks);
         wait_for_blocking_events = (callbacks_executed == 0 and self.idle_hooks.len == 0);
     }
 }

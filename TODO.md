@@ -191,7 +191,7 @@ The real bottleneck after debugging: the 80-byte `Callback` struct copy per `Soo
 | 10.2 | Replace `PyObject_Vectorcall(_register_task)` with `PySet_Add` in `task_schedule_coro` | `task/constructors.zig` | ⚠️ WON'T FIX — `_register_task` is a C builtin, no Python frame overhead |
 | 10.3 | Replace `PyObject_Vectorcall(_enter_task)` with direct set/dict ops | `task/callbacks.zig` | ⚠️ WON'T FIX — `_enter_task` is a C builtin in 3.14 |
 | 10.4 | Replace `PyObject_Vectorcall(_leave_task)` with direct set/dict ops | `task/callbacks.zig` | ⚠️ WON'T FIX — `_leave_task` is a C builtin in 3.14 |
-| 10.5 | Skip `PyContext_Enter`/`Exit` when context is default | `task/callbacks.zig` | 🔴 Pending — minor savings, context ops are also C calls |
+| 10.5 | Skip `PyContext_Enter`/`Exit` when context is default | `task/callbacks.zig` | ⚠️ WON'T FIX — `PyContext_Current()` not in public C API, so we can't do the check ourselves. CPython's `PyContext_Enter` already does fast pointer comparison internally. Saving the function call overhead is ~5ms in Task Spawn (3%) — not worth the churn. |
 | 10.6 | Run full test suite + benchmarks | All | ✅ DONE (263 tests pass, 11 benchmarks complete) |
 
 **Expected impact:** 0.2-0.4× task performance is an architectural bottleneck (PyIter_Send + 80-byte Callback copy per dispatch). Priority 10 optimizations cannot fix this.
