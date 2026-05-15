@@ -47,11 +47,21 @@ pub const BlockingTask = struct {
     /// Persistent storage for io_uring pointer target data.
     /// io_uring stores pointers in sqe.addr that the kernel dereferences
     /// at submit time. With deferred submission, the pointed-to data must
-    /// outlive the caller's stack. These fields live in task_data_pool.
-    /// Only used for operations where the caller passes stack data:
-    /// currently only Timer.wait (timespec on stack). All other operations
-    /// (connect, accept, recvmsg, sendmsg) pass heap-allocated data.
+    /// outlive the caller's stack. These fields live in task_data_pool,
+    /// enabling deferred (batched) submission for ALL operation types.
     timer_storage: std.os.linux.kernel_timespec = undefined,
+
+    /// Storage for zero-copy msghdr (sendmsg/recvmsg with MSG.ZEROCOPY).
+    /// The caller's iovecs point to heap-allocated transport buffers,
+    /// but the enclosing msghdr itself would otherwise live on the stack.
+    /// Storing it here allows deferred submission for zero-copy paths.
+    msg_storage: std.posix.msghdr = undefined,
+
+    /// Storage for a single iovec used by Write.perform zero-copy path.
+    /// That path builds a [1]iovec_const on the stack pointing to the
+    /// data buffer; with deferred submission, the iovec array must also
+    /// live in task_data_pool.
+    write_iov: std.posix.iovec = undefined,
 
     inline fn reset(self: *BlockingTask) *BlockingTasksSet {
         const set: *BlockingTasksSet = @ptrFromInt(

@@ -44,10 +44,8 @@ pub fn recvmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Rec
     const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    // Immediate submit: recvmsg stores msghdr pointer in sqe.addr.
-    // msghdr is heap-allocated in transport data (safe), but latency-sensitive.
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    // Deferred: msghdr is heap-allocated in transport struct (SockRecvFromData).
+    // Flushed by poll_blocking_events() or auto-flush in queue().
     return @intFromPtr(data_ptr);
 }
 
@@ -57,13 +55,16 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
 
     const sqe = blk: {
         if (data.zero_copy) {
-            var msghr = comptime std.mem.zeroes(std.posix.msghdr);
-
             switch (data.data) {
                 .buffer_selection => return error.NotImplemented,
                 .iovecs => |iovecs| {
-                    msghr.iov = @constCast(iovecs.ptr);
-                    msghr.iovlen = @intCast(iovecs.len);
+                    data_ptr.msg_storage.name = null;
+                    data_ptr.msg_storage.namelen = 0;
+                    data_ptr.msg_storage.iov = @constCast(iovecs.ptr);
+                    data_ptr.msg_storage.iovlen = @intCast(iovecs.len);
+                    data_ptr.msg_storage.control = null;
+                    data_ptr.msg_storage.controllen = 0;
+                    data_ptr.msg_storage.flags = 0;
                 },
                 .buffer => {
                     const sqe = try ring.read(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
@@ -72,12 +73,11 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
                 }
             }
 
-            const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &msghr, std.posix.MSG.ZEROCOPY);
+            const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &data_ptr.msg_storage, std.posix.MSG.ZEROCOPY);
             sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-            // Immediate submit: msghr is on the stack.
-            const ret = try IO.submit_guaranteed(ring);
-            if (ret == 0) return error.SQENotSubmitted;
+            // Deferred: msg_storage lives in task_data_pool (heap).
+            // iovecs point to transport's heap-allocated recv buffer.
             break :blk sqe;
         }
         const sqe = try ring.read(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);

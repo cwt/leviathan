@@ -291,42 +291,38 @@ This ensures:
 
 | # | Task | Status |
 |---|------|:---:|
-| 11.11 | Replace `flush_pending_sqes()` + `copy_cqes()` with combined `io_uring_enter(to_submit, wait_nr, GETEVENTS)` — one syscall instead of two | 🔴 Future |
+| 11.11 | Combined submit+wait — already done via `submit_and_wait(1)` in waiting path. `copy_cqes(..., 0)` is pure memcpy (0 syscalls). Non-waiting path already 0 syscalls (`submit()` skips `io_uring_enter` in non-SQPOLL). | ✅ Already done |
 | 11.12 | Batch CQE reaping — process all CQEs per `copy_cqes` without re-entering loop | 🔴 Future |
 | 11.13 | Registered buffers / fixed files for hot paths | 🔴 Future |
 
-#### Phase 3: Pointer-Safe Deferred Submission (future)
+#### Phase 3: Pointer-Safe Deferred Submission — DONE (2026-05-15)
 
-Currently only POLL_ADD and Shutdown can be deferred because they have no pointer
-arguments. All other operations (read, write, timeout, connect, accept, recvmsg,
-sendmsg) must submit immediately because io_uring stores **pointers** in `sqe.addr`
-that the kernel dereferences at submit time — but the caller's stack has already
-been freed.
+All operations now use deferred submission. RecvMsg/SendMsg msghdrs were already
+heap-allocated in transport structs — just removed the redundant `submit_guaranteed()`.
+Zero-copy paths stored their stack-allocated msghdr in new `BlockingTask.msg_storage`
+and `BlockingTask.write_iov` fields in the persistent task_data_pool.
 
-**Solution:** Store the pointer target data inside the `BlockingTask` struct,
-which lives in the persistent `task_data_pool`. Instead of pointing to the
-caller's stack, point to a field in `BlockingTask`:
-
-```zig
-// Before (broken with deferral):
-const sqe = try ring.timeout(ud, &data.duration, 0, flags);
-// &data.duration is on caller's stack — freed before flush
-
-// After (safe with deferral):
-data_ptr.storage.timeout = data.duration;
-const sqe = try ring.timeout(ud, &data_ptr.storage.timeout, 0, flags);
-// &data_ptr.storage.timeout is in persistent task_data_pool
-```
+**Changes:**
+- `BlockingTask`: Added `msg_storage: msghdr` + `write_iov: iovec` for zero-copy paths
+- `Read.recvmsg`: Removed immediate submit (msghdr in heap SockRecvFromData)
+- `Write.sendmsg`: Removed immediate submit (msghdr in heap SockSendToData)
+- `Read.perform` zero-copy: msghdr now in `data_ptr.msg_storage` instead of stack
+- `Write.perform` zero-copy: msghdr + iovec now in `data_ptr.msg_storage/write_iov`
+- `Write.perform_with_iovecs` zero-copy: msghdr now in `data_ptr.msg_storage`
+- `Cancel.perform`: Still immediate (cancel targets in-flight ops)
 
 | # | Task | Status |
 |---|------|:---:|
-| 11.14 | Add `storage` union to `BlockingTask` with fields for timespec, sockaddr, msghdr, buffer slices | `io/main.zig` | 🔴 Future |
-| 11.15 | Refactor `Timer.wait` to store timespec in `BlockingTask.storage` and defer submission | `timer.zig` | 🔴 Future |
-| 11.16 | Refactor `Socket.connect` to store sockaddr in `BlockingTask.storage` and defer submission | `socket.zig` | 🔴 Future |
-| 11.17 | Refactor `Socket.accept` to store addr/addrlen in `BlockingTask.storage` and defer submission | `socket.zig` | 🔴 Future |
-| 11.18 | Refactor `Read.perform`/`Write.perform` to store buffer/iovec in `BlockingTask.storage` (already heap-safe, just formalize) | `read.zig`, `write.zig` | 🔴 Future |
-| 11.19 | Refactor `RecvMsg`/`SendMsg` to store msghdr in `BlockingTask.storage` and defer submission | `read.zig`, `write.zig` | 🔴 Future |
-| 11.20 | Remove immediate `submit_guaranteed()` calls from ALL ops — flush handles everything | All IO op files | 🔴 Future |
+| 11.14 | Add `storage` fields to `BlockingTask` (msghdr, iovec) | `io/main.zig` | ✅ **DONE** |
+| 11.15 | `Timer.wait` — already deferred via `timer_storage` | `timer.zig` | ✅ Already done |
+| 11.16 | `Socket.connect` — already deferred (addr in heap) | `socket.zig` | ✅ Already done |
+| 11.17 | `Socket.accept` — already deferred (addr/addrlen in heap) | `socket.zig` | ✅ Already done |
+| 11.18 | `Read.perform`/`Write.perform` — zero-copy msghdr in `msg_storage` | `read.zig`, `write.zig` | ✅ **DONE** |
+| 11.19 | `RecvMsg`/`SendMsg` — removed immediate submit | `read.zig`, `write.zig` | ✅ **DONE** |
+| 11.20 | Removed `submit_guaranteed()` from all ops except cancel | All IO op files | ✅ **DONE** |
+
+**Impact:** All non-cancel IO operations are now deferred. SQEs accumulate across callback
+batches and are flushed together in `poll_blocking_events()` maximising each io_uring_enter().
 
 **Expected impact with Phases 2 + 3:** 0.4-0.6× → **1.5-3.0×** asyncio on all I/O benchmarks.
 Leviathan finally leverages io_uring's true advantage: batched submission + kernel-side dispatch.

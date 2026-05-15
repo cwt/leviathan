@@ -52,8 +52,7 @@ pub fn sendmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Sen
     const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-    const ret = try IO.submit_guaranteed(ring);
-    if (ret == 0) return error.SQENotSubmitted;
+    // Deferred: msghdr_const is heap-allocated in transport struct (SockSendToData).
     return @intFromPtr(data_ptr);
 }
 
@@ -63,22 +62,27 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
 
     const sqe = blk: {
         if (data.zero_copy) {
-            const iovecs: [1]std.posix.iovec_const = .{
-                std.posix.iovec_const{
-                    .base = data.data.ptr,
-                    .len = data.data.len
-                }
+            data_ptr.write_iov = .{
+                .base = @ptrCast(@constCast(data.data.ptr)),
+                .len = data.data.len,
             };
-            var msghr = comptime std.mem.zeroes(std.posix.msghdr_const);
-            msghr.iov = &iovecs;
-            msghr.iovlen = 1;
+            data_ptr.msg_storage.name = null;
+            data_ptr.msg_storage.namelen = 0;
+            data_ptr.msg_storage.iov = @as([*]std.posix.iovec, @ptrCast(&data_ptr.write_iov));
+            data_ptr.msg_storage.iovlen = 1;
+            data_ptr.msg_storage.control = null;
+            data_ptr.msg_storage.controllen = 0;
+            data_ptr.msg_storage.flags = 0;
 
-            const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &msghr, std.posix.MSG.ZEROCOPY);
+            const sqe = try ring.sendmsg(
+                @intCast(@intFromPtr(data_ptr)), data.fd,
+                @as(*const std.posix.msghdr_const, @ptrCast(&data_ptr.msg_storage)),
+                std.posix.MSG.ZEROCOPY,
+            );
             sqe.flags |= std.os.linux.IOSQE_ASYNC;
-            
-            // Immediate submit: msghr is on the stack.
-            const ret = try IO.submit_guaranteed(ring);
-            if (ret == 0) return error.SQENotSubmitted;
+
+            // Deferred: msg_storage and write_iov live in task_data_pool (heap).
+            // data.data.ptr points to transport's heap-allocated send buffer.
             break :blk sqe;
         }
         const sqe = try ring.write(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
@@ -102,16 +106,23 @@ pub fn perform_with_iovecs(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSe
 
     const sqe = blk: {
         if (data.zero_copy) {
-            var msghr = comptime std.mem.zeroes(std.posix.msghdr_const);
-            msghr.iov = data.data.ptr;
-            msghr.iovlen = @intCast(data.data.len);
+            data_ptr.msg_storage.name = null;
+            data_ptr.msg_storage.namelen = 0;
+            data_ptr.msg_storage.iov = @as([*]std.posix.iovec, @ptrCast(@constCast(data.data.ptr)));
+            data_ptr.msg_storage.iovlen = @intCast(data.data.len);
+            data_ptr.msg_storage.control = null;
+            data_ptr.msg_storage.controllen = 0;
+            data_ptr.msg_storage.flags = 0;
 
-            const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &msghr, std.posix.MSG.ZEROCOPY);
+            const sqe = try ring.sendmsg(
+                @intCast(@intFromPtr(data_ptr)), data.fd,
+                @as(*const std.posix.msghdr_const, @ptrCast(&data_ptr.msg_storage)),
+                std.posix.MSG.ZEROCOPY,
+            );
             sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
-            // Immediate submit: msghr is on the stack.
-            const ret = try IO.submit_guaranteed(ring);
-            if (ret == 0) return error.SQENotSubmitted;
+            // Deferred: msg_storage lives in task_data_pool.
+            // iovecs in data.data.ptr are heap-allocated from transport.
             break :blk sqe;
         }
         const sqe = try ring.writev(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
