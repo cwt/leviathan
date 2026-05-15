@@ -16,8 +16,8 @@ pub const SubprocessTransportObject = extern struct {
     returncode: ?PyObject,
 
     pidfd_task_id: usize,
+    pidfd: std.posix.fd_t,
     closed: bool,
-    poll_count: u32,
 };
 
 fn subprocess_dealloc(self: ?*SubprocessTransportObject) callconv(.c) void {
@@ -94,6 +94,10 @@ fn subprocess_close(self: ?*SubprocessTransportObject, _: ?PyObject) callconv(.c
             }
             instance.pidfd_task_id = 0;
         }
+        if (instance.pidfd >= 0) {
+            _ = std.os.linux.close(instance.pidfd);
+            instance.pidfd = -1;
+        }
     }
     return python_c.get_py_none();
 }
@@ -137,8 +141,6 @@ const SubprocessSlots: []const python_c.PyType_Slot = &[_]python_c.PyType_Slot{
     .{ .slot = 0, .pfunc = null },
 };
 
-// const PythonSubprocessMembers: []const python_c.PyMemberDef = &[_]python_c.PyMemberDef{
-
 var subprocess_spec = python_c.PyType_Spec{
     .name = "leviathan.SubprocessTransport",
     .basicsize = @sizeOf(SubprocessTransportObject),
@@ -156,25 +158,17 @@ pub fn create_type() !void {
     ) orelse return error.PythonError);
 }
 
-fn pidfd_timer_duration(poll_count: u32) std.os.linux.timespec {
-    return switch (poll_count) {
-        0 => .{ .sec = 0, .nsec = 1_000_000 },
-        1 => .{ .sec = 0, .nsec = 5_000_000 },
-        2 => .{ .sec = 0, .nsec = 25_000_000 },
-        else => .{ .sec = 0, .nsec = 100_000_000 },
-    };
-}
-
 fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
     const transport: *SubprocessTransportObject = @alignCast(@ptrCast(data.user_data.?));
     defer python_c.py_decref(@ptrCast(transport));
 
     if (data.cancelled or transport.closed) return;
 
-    var status: u32 = undefined;
-    const wpid = std.os.linux.wait4(transport.pid, &status, std.posix.W.NOHANG, null);
-    if (wpid >= 0xFFFFF000) {
-        const errno: u32 = @truncate(~wpid + 1);
+    var siginfo: std.os.linux.siginfo_t = undefined;
+    const res = std.os.linux.waitid(.PIDFD, transport.pidfd, &siginfo, std.os.linux.W.EXITED | std.os.linux.W.NOHANG, null);
+
+    if (res != 0) {
+        const errno: u32 = @truncate(~res + 1);
         const err: std.os.linux.E = @enumFromInt(errno);
         if (err == .CHILD) {
             transport.returncode = python_c.PyLong_FromLong(-1);
@@ -192,38 +186,18 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
                     python_c.py_decref(v);
                 }
             }
+            _ = std.os.linux.close(transport.pidfd);
+            transport.pidfd = -1;
+            transport.pidfd_task_id = 0;
             python_c.py_xdecref(transport.popen);
             transport.popen = null;
             return;
         }
-        transport.poll_count += 1;
-        const duration = pidfd_timer_duration(transport.poll_count);
-        const py_loop = transport.loop orelse return;
-        const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(py_loop)));
+        const loop = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(transport.loop.?)));
         python_c.py_incref(@ptrCast(transport));
-        _ = try loop_data.io.queue(.{
-            .WaitTimer = .{
-                .duration = duration,
-                .delay_type = .Relative,
-                .callback = .{
-                    .func = &pidfd_exit_callback,
-                    .cleanup = null,
-                    .data = .{ .user_data = transport },
-                },
-            },
-        });
-        return;
-    }
-    if (wpid != @as(usize, @intCast(transport.pid))) {
-        transport.poll_count += 1;
-        const duration = pidfd_timer_duration(transport.poll_count);
-        const py_loop = transport.loop orelse return;
-        const loop_data = utils.get_data_ptr(Loop, @as(*LoopObject, @ptrCast(py_loop)));
-        python_c.py_incref(@ptrCast(transport));
-        _ = try loop_data.io.queue(.{
-            .WaitTimer = .{
-                .duration = duration,
-                .delay_type = .Relative,
+        transport.pidfd_task_id = try loop.io.queue(.{
+            .WaitReadable = .{
+                .fd = transport.pidfd,
                 .callback = .{
                     .func = &pidfd_exit_callback,
                     .cleanup = null,
@@ -234,12 +208,15 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
         return;
     }
 
-    const rc: c_int = if (std.posix.W.IFEXITED(@intCast(status)))
-        @intCast(std.posix.W.EXITSTATUS(@intCast(status)))
-    else if (std.posix.W.IFSIGNALED(@intCast(status)))
-        -@as(c_int, @intCast(@intFromEnum(std.posix.W.TERMSIG(@intCast(status)))))
-    else
-        0;
+    const CLD_EXITED = 1;
+    const CLD_KILLED = 2;
+    const CLD_DUMPED = 3;
+
+    const rc: i32 = switch (siginfo.code) {
+        CLD_EXITED => siginfo.fields.common.second.sigchld.status,
+        CLD_KILLED, CLD_DUMPED => -siginfo.fields.common.second.sigchld.status,
+        else => 0,
+    };
 
     transport.returncode = python_c.PyLong_FromLong(rc);
 
@@ -255,6 +232,9 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
         python_c.py_decref(r2);
     }
 
+    _ = std.os.linux.close(transport.pidfd);
+    transport.pidfd = -1;
+    transport.pidfd_task_id = 0;
     python_c.py_xdecref(transport.popen);
     transport.popen = null;
 }
@@ -262,11 +242,15 @@ fn pidfd_exit_callback(data: *const CallbackManager.CallbackData) !void {
 pub fn start_exit_watcher(transport: *SubprocessTransportObject, loop: *LoopObject) !void {
     const loop_data = utils.get_data_ptr(Loop, loop);
 
+    const pidfd: std.posix.fd_t = @intCast(std.os.linux.syscall2(.pidfd_open, @as(usize, @intCast(transport.pid)), 0));
+    if (pidfd < 0) return error.SystemResources;
+    transport.pidfd = pidfd;
+    errdefer _ = std.os.linux.close(pidfd);
+
     python_c.py_incref(@ptrCast(transport));
     transport.pidfd_task_id = try loop_data.io.queue(.{
-        .WaitTimer = .{
-            .duration = pidfd_timer_duration(transport.poll_count),
-            .delay_type = .Relative,
+        .WaitReadable = .{
+            .fd = pidfd,
             .callback = .{
                 .func = &pidfd_exit_callback,
                 .cleanup = null,
@@ -287,8 +271,8 @@ pub fn new_with_pid(
     self.pid = pid;
     self.returncode = null;
     self.pidfd_task_id = 0;
+    self.pidfd = -1;
     self.closed = false;
-    self.poll_count = 0;
 
     return self;
 }
