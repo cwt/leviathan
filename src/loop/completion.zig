@@ -19,8 +19,8 @@ pub const CompletionOp = enum(u8) {
 /// No function pointers: Python switches on `op` to call the right method.
 pub const CompletionRecord = extern struct {
     op: CompletionOp,
-    transport: ?*PyObject,     // StreamTransportObject or DatagramTransportObject
-    data: ?*PyObject,          // PyBytes for data_received, PyException for errors, null for EOF
+    transport: ?PyObject,     // StreamTransportObject or DatagramTransportObject
+    data: ?PyObject,          // PyBytes for data_received, PyException for errors, null for EOF
     nbytes: i64,               // bytes received (for buffered protocol), or error code
 };
 
@@ -58,11 +58,11 @@ pub const CompletionBatch = struct {
         while (i < self.ready_count) : (i += 1) {
             const rec = &self.records[i];
             if (rec.transport) |t| {
-                const vret = visit.?(@ptrCast(t), arg);
+                const vret = visit.?(t, arg);
                 if (vret != 0) return vret;
             }
             if (rec.data) |d| {
-                const vret = visit.?(@ptrCast(d), arg);
+                const vret = visit.?(d, arg);
                 if (vret != 0) return vret;
             }
         }

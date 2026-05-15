@@ -98,24 +98,28 @@ pub fn read_operation_completed(read_transport: *ReadTransport, data: []const u8
 
     switch (transport.protocol_type) {
         .Buffered => {
-            const nbytes_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(data.len))
-                orelse return error.PythonError;
-            defer python_c.py_decref(nbytes_obj);
+            if (!read_transport.batch_dispatched) {
+                const nbytes_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(data.len))
+                    orelse return error.PythonError;
+                defer python_c.py_decref(nbytes_obj);
 
-            const ret = python_c.PyObject_CallOneArg(transport.protocol_buffer_updated.?, nbytes_obj)
-                orelse return error.PythonError;
-            python_c.py_decref(ret);
+                const ret = python_c.PyObject_CallOneArg(transport.protocol_buffer_updated.?, nbytes_obj)
+                    orelse return error.PythonError;
+                python_c.py_decref(ret);
+            }
 
             try queue_read_operation(transport, read_transport, .Buffered);
         },
         .Legacy => {
-            const py_bytes = python_c.PyBytes_FromStringAndSize(data.ptr, @intCast(data.len))
-                orelse return error.PythonError;
-            defer python_c.py_decref(py_bytes);
+            if (!read_transport.batch_dispatched) {
+                const py_bytes = python_c.PyBytes_FromStringAndSize(data.ptr, @intCast(data.len))
+                    orelse return error.PythonError;
+                defer python_c.py_decref(py_bytes);
 
-            const ret = python_c.PyObject_CallOneArg(transport.protocol_data_received.?, py_bytes)
-                orelse return error.PythonError;
-            python_c.py_decref(ret);
+                const ret = python_c.PyObject_CallOneArg(transport.protocol_data_received.?, py_bytes)
+                    orelse return error.PythonError;
+                python_c.py_decref(ret);
+            }
 
             try queue_read_operation(transport, read_transport, .Legacy);
         }

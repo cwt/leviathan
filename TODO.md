@@ -427,17 +427,31 @@ All 268 tests pass on all 4 Pythons (3.13, 3.14, 3.13t, 3.14t).
 |------|--------|
 | `src/loop/completion.zig` | New: `CompletionOp` enum, `CompletionRecord` (32 bytes), `CompletionBatch` (max 4096, GC-safe traverse) |
 | `src/loop/main.zig` | `Loop` struct: added `completion_batch: CompletionBatch` field |
-| `src/loop/runner.zig` | `dispatch_completion_batch()` function; called in main loop tick before callback drain |
+| `src/loop/runner.zig` | `dispatch_completion_batch()` + `batch_clear()` functions; called in main loop tick |
 | `src/loop/runner.zig` | `fetch_completed_tasks`: batch insertion logic present but bypassed; uses standard callback path |
-| `src/transports/read_transport.zig` | `perform()`: sets `module_ptr` to `parent_transport` for batch routing |
+| `src/transports/read_transport.zig` | `perform()`: sets `module_ptr` to `parent_transport` for batch routing; added `batch_dispatched` flag |
+| `src/transports/stream/read.zig` | Skip Python protocol call when `batch_dispatched` is true; still re-queues read |
+| `src/callback_manager.zig` | Added `batch_dispatched` flag to `CallbackData` |
 | `leviathan/loop.py` | `_dispatch_completions()`, `_dispatch_data_received()`, `_dispatch_eof_received()`, `_dispatch_connection_lost()` |
 | `src/loop/python/constructors.zig` | `loop_traverse`: visits `completion_batch` for GC safety |
 
-**Build fixes during implementation:**
-- `execute_hooks` function header was accidentally removed when inserting `dispatch_completion_batch` — restored
-- `batch.records.ptr` → `&batch.records[0]` (array, not slice)
+### Phase 2: Batch Insertion — ⚠️ BLOCKED (2026-05-16)
 
-**Next:** Re-enable batch insertion in `fetch_completed_tasks` (Phase 2), benchmark for performance impact.
+Batch insertion logic implemented in `fetch_completed_tasks` but disabled due to deadlock.
+
+**Root cause:** When `protocol.data_received()` is called from `_dispatch_completions`, it tries to
+schedule work on the event loop (e.g., `StreamReader.feed_data()` → `loop.call_soon()`). But the
+loop mutex is already held by the main loop runner, causing a deadlock.
+
+**Attempted fixes:**
+- Direct call: `protocol.data_received(data)` → deadlocks in `call_soon`
+- `self.call_soon(protocol.data_received, data)` → also deadlocks (mutex already held)
+- Deferred queue: schedule after batch, then call → still deadlocks for `StreamReaderProtocol`
+
+**Next steps:** Need to either:
+1. Release loop mutex before batch dispatch (complex, may break other invariants)
+2. Use a separate "post-dispatch" queue that's processed after mutex is released
+3. Have Zig call protocol methods directly instead of going through Python (requires Zig-side protocol access)
 
 ### Root Cause of 0.6-0.8× I/O Performance
 

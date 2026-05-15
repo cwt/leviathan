@@ -13,6 +13,8 @@ const CallbackManager = @import("callback_manager");
 const Loop = @import("main.zig");
 const Future = @import("../future/main.zig");
 const Completion = @import("completion.zig");
+const ReadTransport = @import("../transports/read_transport.zig");
+const Stream = @import("../transports/stream/main.zig");
 
 fn slow_callback_warning_handler(duration: f64, module_ptr: ?*python_c.PyObject, data: ?*anyopaque) void {
     const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(data.?));
@@ -108,20 +110,18 @@ fn dispatch_completion_batch(
 
     const count = batch.ready_count;
 
-    // Call Python dispatch method: loop._dispatch_completions(records, count)
     const dispatch_func = python_c.PyObject_GetAttrString(
         @ptrCast(loop_obj), "_dispatch_completions\x00"
     ) orelse {
         python_c.PyErr_Clear();
-        batch.reset();
+        batch_clear(self);
         return;
     };
     defer python_c.py_decref(dispatch_func);
 
-    // Build args: (records_ptr, count)
     const args = python_c.PyTuple_New(2) orelse {
         python_c.PyErr_Clear();
-        batch.reset();
+        batch_clear(self);
         return;
     };
     defer python_c.py_decref(args);
@@ -129,7 +129,7 @@ fn dispatch_completion_batch(
     const ptr_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(@intFromPtr(&batch.records[0])));
     if (ptr_obj == null) {
         python_c.PyErr_Clear();
-        batch.reset();
+        batch_clear(self);
         return;
     }
     defer python_c.py_decref(ptr_obj);
@@ -138,7 +138,7 @@ fn dispatch_completion_batch(
     const count_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(count));
     if (count_obj == null) {
         python_c.PyErr_Clear();
-        batch.reset();
+        batch_clear(self);
         return;
     }
     defer python_c.py_decref(count_obj);
@@ -147,6 +147,17 @@ fn dispatch_completion_batch(
     const ret = python_c.PyObject_Call(dispatch_func, args, null);
     if (ret) |r| python_c.py_decref(r) else python_c.PyErr_Clear();
 
+    batch_clear(self);
+}
+
+fn batch_clear(self: *Loop) void {
+    const batch = &self.completion_batch;
+    var i: usize = 0;
+    while (i < batch.ready_count) : (i += 1) {
+        if (batch.records[i].data) |d| {
+            python_c.py_decref(d);
+        }
+    }
     batch.reset();
 }
 
@@ -174,6 +185,36 @@ fn fetch_completed_tasks(
             .callback => |*v| {
                 v.data.io_uring_err = err;
                 v.data.io_uring_res = cqe.res;
+
+                // P15 Phase 2: Batch read transport completions
+                // TEMPORARILY DISABLED: protocol.data_received causes deadlock when called
+                // from batch dispatch (loop mutex already held). Will fix in Phase 2.1.
+                if (false and v.data.module_ptr != null and err == .SUCCESS and cqe.res > 0) {
+                    const read_transport: *ReadTransport = @alignCast(@ptrCast(v.data.user_data.?));
+                    const bytes_read: usize = @intCast(cqe.res);
+                    const buffer = read_transport.buffer_to_read[0..bytes_read];
+
+                    const py_bytes = python_c.PyBytes_FromStringAndSize(
+                        buffer.ptr, @intCast(bytes_read)
+                    );
+                    if (py_bytes) |pb| {
+                        // Get protocol from parent transport for direct dispatch
+                        const stream_transport: *Stream.StreamTransportObject = @ptrCast(read_transport.parent_transport);
+                        
+                        const record = Completion.CompletionRecord{
+                            .op = .DataReceived,
+                            .transport = stream_transport.protocol,
+                            .data = pb,
+                            .nbytes = @as(i64, @intCast(bytes_read)),
+                        };
+
+                        if (self.completion_batch.push(record)) {
+                            v.data.batch_dispatched = true;
+                        } else {
+                            python_c.py_decref(pb);
+                        }
+                    }
+                }
 
                 blocking_task.check_result(err);
                 if (!ready_queue.try_push(v.*)) return error.Overflow;

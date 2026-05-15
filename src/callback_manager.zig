@@ -27,6 +27,7 @@ pub const CallbackData = struct {
     user_data: ?*anyopaque,
 
     cancelled: bool = false,
+    batch_dispatched: bool = false,
     module_ptr: ?*python_c.PyObject = null,
     callback_ptr: ?PyObject = null,
 

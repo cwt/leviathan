@@ -35,11 +35,12 @@ fd: std.posix.fd_t,
 
 blocking_task_id: usize = 0,
 
-zero_copying: bool,
-closed: bool = false,
-is_closing: bool = false,
-cancelling: bool = false,
-initialized: bool = false,
+    zero_copying: bool,
+    closed: bool = false,
+    is_closing: bool = false,
+    cancelling: bool = false,
+    initialized: bool = false,
+    batch_dispatched: bool = false,
 
 pub fn init(
     self: *ReadTransport, loop: *Loop, fd: std.posix.fd_t, callback: ReadCompletedCallback,
@@ -124,6 +125,7 @@ fn read_operation_completed(data: *const CallbackManager.CallbackData) !void {
 
     self.blocking_task_id = 0;
     self.cancelling = false;
+    self.batch_dispatched = data.batch_dispatched;
 
     var bytes_read: usize = 0;
     if (io_uring_err == .SUCCESS and !data.cancelled) {
