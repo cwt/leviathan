@@ -376,6 +376,42 @@ Replaced `WaitTimer`+`wait4` polling with `pidfd_open`+`WaitReadable`+`waitid(.P
 | **Subprocess** | **0.23×** | **~1.0×** | **+335%** 🔥 |
 | All others | unchanged | unchanged | within noise |
 
+---
+
+## 🔴 PRIORITY 14: Remove IOSQE_ASYNC from Data Ops — ✅ DONE (2026-05-15)
+
+### Root Cause of 0.3-0.6× I/O Performance
+
+Every IO operation set `sqe.flags |= IOSQE_ASYNC` (20 locations across 4 files).
+This forces the kernel to offload ALL operations to workqueue threads, even
+trivial read/write on sockets with data already buffered. Each offloaded op
+adds a context switch (submit → workqueue → complete).
+
+**Fix:** Removed `IOSQE_ASYNC` from `ring.read`, `ring.write`, `ring.writev`,
+`ring.recvmsg`, `ring.sendmsg`. Kept on `POLL_ADD`, `accept`, `connect`,
+`shutdown`, `Timer.wait`, `link_timeout` (inherently async ops).
+
+On non-blocking sockets, the kernel handles `-EAGAIN` gracefully:
+it auto-installs a poll callback and completes when data arrives.
+No workqueue needed — no context switch overhead.
+
+### Actual Impact (M=65536)
+
+| Benchmark | Before (464) | After (465) | Change |
+|-----------|:-----------:|:----------:|:------:|
+| **UDP Ping-Pong** | **0.45×** | **1.16×** | **+156%** 🔥 |
+| **TCP Echo** | **0.38×** | **0.75×** | **+99%**  |
+| Event Fiesta Factory | 0.65× | 0.91× | +40% |
+| Socket Ops | 0.53× | 0.65× | +23% |
+| Producer Consumer | 0.62× | 0.73× | +18% |
+| Task Spawn | 0.67× | 0.75× | +11% |
+| Chat | 0.96× | 1.00× | ~same |
+| Subprocess | 1.00× | 1.00× | ~same |
+
+**Impact:** UDP Ping-Pong now beats asyncio. All I/O benchmarks improved
+significantly. The remaining gap (~0.7× on TCP/Unix Echo) is likely from
+callback dispatch overhead (Zig→Python boundary per completion).
+
 **Key insight:** Benchmark noise (stdev 30-60% of mean) dwarfs the batching improvement at these operation counts. The existing benchmarks scale `M` as total bytes transferred, not concurrent IO operations — so at M=65536 there are only ~64 connections. The batching benefit will be proportional to **operations per loop iteration**, which benchmarks don't stress.
 
 **Phase 2 (combined submit+wait) will compound this improvement** by eliminating the second syscall (copy_cqes also calls `io_uring_enter`).
