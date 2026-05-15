@@ -12,6 +12,7 @@ pub const Scheduling = @import("scheduling/main.zig");
 const FSWatcher = @import("fs_watcher.zig");
 const ChildWatcher = @import("child_watcher.zig");
 const UnixSignals = @import("unix_signals.zig");
+pub const Completion = @import("completion.zig");
 
 pub const DNS = @import("dns/main.zig");
 const Handle = @import("../handle.zig");
@@ -51,6 +52,11 @@ reserved_slots: usize = 0,
 
 io: Scheduling.IO,
 dns: DNS,
+
+/// P15 Phase 1: Batch buffer for IO completion records.
+/// Zig writes CompletionRecords here during fetch_completed_tasks.
+/// Python reads the batch and dispatches protocol methods in a tight loop.
+completion_batch: Completion.CompletionBatch = .{},
 
 fs_watcher: FSWatcher,
 child_watcher: ChildWatcher,

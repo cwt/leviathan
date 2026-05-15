@@ -12,6 +12,7 @@ const lock = @import("../utils/lock.zig");
 const CallbackManager = @import("callback_manager");
 const Loop = @import("main.zig");
 const Future = @import("../future/main.zig");
+const Completion = @import("completion.zig");
 
 fn slow_callback_warning_handler(duration: f64, module_ptr: ?*python_c.PyObject, data: ?*anyopaque) void {
     const loop_obj: *Loop.Python.LoopObject = @alignCast(@ptrCast(data.?));
@@ -96,6 +97,57 @@ pub inline fn call_once(
     }
 
     return callbacks_executed;
+}
+
+fn dispatch_completion_batch(
+    self: *Loop,
+    loop_obj: *Loop.Python.LoopObject,
+) !void {
+    const batch = &self.completion_batch;
+    if (batch.is_empty()) return;
+
+    const count = batch.ready_count;
+
+    // Call Python dispatch method: loop._dispatch_completions(records, count)
+    const dispatch_func = python_c.PyObject_GetAttrString(
+        @ptrCast(loop_obj), "_dispatch_completions\x00"
+    ) orelse {
+        python_c.PyErr_Clear();
+        batch.reset();
+        return;
+    };
+    defer python_c.py_decref(dispatch_func);
+
+    // Build args: (records_ptr, count)
+    const args = python_c.PyTuple_New(2) orelse {
+        python_c.PyErr_Clear();
+        batch.reset();
+        return;
+    };
+    defer python_c.py_decref(args);
+
+    const ptr_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(@intFromPtr(&batch.records[0])));
+    if (ptr_obj == null) {
+        python_c.PyErr_Clear();
+        batch.reset();
+        return;
+    }
+    defer python_c.py_decref(ptr_obj);
+    _ = python_c.PyTuple_SetItem(args, 0, ptr_obj);
+
+    const count_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(count));
+    if (count_obj == null) {
+        python_c.PyErr_Clear();
+        batch.reset();
+        return;
+    }
+    defer python_c.py_decref(count_obj);
+    _ = python_c.PyTuple_SetItem(args, 1, count_obj);
+
+    const ret = python_c.PyObject_Call(dispatch_func, args, null);
+    if (ret) |r| python_c.py_decref(r) else python_c.PyErr_Clear();
+
+    batch.reset();
 }
 
 fn execute_hooks(hooks: *Loop.HooksList) !void {
@@ -229,6 +281,9 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
         const ready_tasks_queue = &self.ready_tasks_queues[old_index];
 
         try poll_blocking_events(self, mutex, wait_for_blocking_events, ready_tasks_queue);
+
+        // P15 Phase 1: Dispatch IO completion batch before processing callbacks
+        try dispatch_completion_batch(self, loop_obj);
 
         ready_tasks_queue_index = 1 - ready_tasks_queue_index;
         self.ready_tasks_queue_index = ready_tasks_queue_index;

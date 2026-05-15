@@ -159,6 +159,88 @@ class Loop(_Loop):
         self._exception_handler(context)
 
     # --------------------------------------------------------------------------------------------------------
+    # P15 Phase 1: Completion batch dispatch infrastructure.
+    # Called from Zig after poll_blocking_events to dispatch IO completions
+    # in a tight Python loop. Currently unused (batch always empty) —
+    # infrastructure in place for future optimization.
+    # --------------------------------------------------------------------------------------------------------
+
+    def _dispatch_completions(self, records_ptr: int, count: int) -> None:
+        """Dispatch IO completions from Zig's batch buffer.
+
+        Args:
+            records_ptr: Pointer to array of CompletionRecord (32 bytes each).
+            count: Number of records in the batch.
+        """
+        if count == 0:
+            return
+
+        # CompletionRecord layout (extern struct, 32 bytes):
+        #   op: u8          (offset 0)
+        #   transport: ptr  (offset 8)
+        #   data: ptr       (offset 16)
+        #   nbytes: i64     (offset 24)
+        import ctypes
+        import struct
+
+        record_size = 32
+        for i in range(count):
+            offset = i * record_size
+            raw = ctypes.string_at(records_ptr + offset, record_size)
+            op = raw[0]
+            transport_ptr = struct.unpack_from("Q", raw, 8)[0]
+            data_ptr = struct.unpack_from("Q", raw, 16)[0]
+            nbytes = struct.unpack_from("q", raw, 24)[0]
+
+            if op == 0:  # DataReceived
+                self._dispatch_data_received(transport_ptr, data_ptr, nbytes)
+            elif op == 1:  # EofReceived
+                self._dispatch_eof_received(transport_ptr)
+            elif op == 3:  # ConnectionLost
+                self._dispatch_connection_lost(transport_ptr, data_ptr)
+
+    def _dispatch_data_received(self, transport_ptr: int, data_ptr: int, nbytes: int) -> None:
+        """Call protocol.data_received on a transport."""
+        import ctypes
+        py_obj = ctypes.py_object.from_address(data_ptr)
+        transport = ctypes.py_object.from_address(transport_ptr).value
+        try:
+            transport._protocol.data_received(py_obj.value)
+        except Exception:
+            self.call_exception_handler({
+                "message": "Exception in data_received callback",
+                "exception": Exception("data_received failed"),
+                "transport": transport,
+            })
+
+    def _dispatch_eof_received(self, transport_ptr: int) -> None:
+        """Call protocol.eof_received on a transport."""
+        import ctypes
+        transport = ctypes.py_object.from_address(transport_ptr).value
+        try:
+            transport._protocol.eof_received()
+        except Exception:
+            self.call_exception_handler({
+                "message": "Exception in eof_received callback",
+                "exception": Exception("eof_received failed"),
+                "transport": transport,
+            })
+
+    def _dispatch_connection_lost(self, transport_ptr: int, exc_ptr: int) -> None:
+        """Call protocol.connection_lost on a transport."""
+        import ctypes
+        exc = ctypes.py_object.from_address(exc_ptr).value if exc_ptr else None
+        transport = ctypes.py_object.from_address(transport_ptr).value
+        try:
+            transport._protocol.connection_lost(exc)
+        except Exception:
+            self.call_exception_handler({
+                "message": "Exception in connection_lost callback",
+                "exception": Exception("connection_lost failed"),
+                "transport": transport,
+            })
+
+    # --------------------------------------------------------------------------------------------------------
 
     async def shutdown_asyncgens(self) -> None:
         asyncgens = self._asyncgens
