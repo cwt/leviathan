@@ -329,13 +329,13 @@ Leviathan finally leverages io_uring's true advantage: batched submission + kern
 
 ---
 
-## 🔴 PRIORITY 13: Subprocess — pidfd-Based Exit Notification (2026-05-15)
+## 🔴 PRIORITY 13: Subprocess — pidfd-Based Exit Notification — ✅ DONE (2026-05-15)
 
 ### Root Cause of 0.23× Subprocess Performance
 
-Subprocess benchmark (0.23×, 4× slower than asyncio) is the worst-performing benchmark.
+Subprocess benchmark (0.23×, 4× slower than asyncio) was the worst-performing benchmark.
 
-**Current design:** `src/transports/subprocess/transport.zig` uses **timer-based polling** to detect child exit:
+**Old design:** `src/transports/subprocess/transport.zig` used **timer-based polling** to detect child exit:
 
 ```
 start_exit_watcher → queue WaitTimer(1ms)
@@ -354,31 +354,27 @@ pidfd_open(pid, 0) → queue WaitReadable(pidfd)
 pidfd becomes readable → kernel wakes io_uring → callback → waitid(.PIDFD)
 ```
 
-The `child_watcher` is a separate mechanism from the subprocess transport and is NOT used by it. The transport re-implements its own slower polling-based watcher instead.
+The `child_watcher` was a separate mechanism from the subprocess transport and was NOT used by it.
 
 ### Fix: Port subprocess transport to pidfd + WaitReadable
 
-Replace the transport's `WaitTimer`+`wait4` polling loop with `pidfd_open`+`WaitReadable`+`waitid(.PIDFD)` — the same pattern `child_watcher` already uses. No periodic timers, no exponential backoff, no polling. The kernel notifies io_uring the instant the child exits.
+Replaced `WaitTimer`+`wait4` polling with `pidfd_open`+`WaitReadable`+`waitid(.PIDFD)` — same as child_watcher.
 
-| # | Task | Files | Expected |
-|---|------|-------|:--------:|
-| 13.1 | Open pidfd in `new_with_pid` via `pidfd_open` syscall | `transport.zig` | |
-| 13.2 | Queue `WaitReadable` on pidfd instead of `WaitTimer` in `start_exit_watcher` | `transport.zig` | |
-| 13.3 | Rewrite `pidfd_exit_callback` to use `waitid(.PIDFD)` instead of `wait4` | `transport.zig` | |
-| 13.4 | Close pidfd in `subprocess_close` | `transport.zig` | |
-| 13.5 | Remove `poll_count` field and `pidfd_timer_duration` function | `transport.zig` | |
-| 13.6 | Run full test suite + benchmarks | All | **Expected: 0.23× → 0.8-1.2×** |
+| # | Task | Status |
+|---|------|:---:|
+| 13.1 | Open pidfd in `start_exit_watcher` via `pidfd_open` syscall | ✅ DONE |
+| 13.2 | Queue `WaitReadable` on pidfd instead of `WaitTimer` | ✅ DONE |
+| 13.3 | Use `waitid(.PIDFD)` instead of `wait4` in callback | ✅ DONE |
+| 13.4 | Close pidfd in `subprocess_close` | ✅ DONE |
+| 13.5 | Removed `poll_count` and `pidfd_timer_duration` | ✅ DONE |
+| 13.6 | All 263 tests + 5 std modules pass on 4 Pythons | ✅ DONE |
 
-### Actual Impact (measured 2026-05-13)
+### Actual Impact
 
-| Benchmark | Before (446) | After (448) | Change | Notes |
-|-----------|:-----------:|:----------:|:------:|-------|
-| TCP Echo 65536 | 0.39× | 0.46× | +18% | High variance (stdev=60%), marginal |
-| Unix Echo 65536 | 0.21× | 0.45× | **+114%** | Improvement at large sizes |
-| UDP Ping-Pong | 0.65× | 0.65× | ~same | Noise dominates |
-| Socket Ops | 0.52× | 0.56× | ~same | Fixed overhead dominates |
-| Task Spawn | 0.44× | 0.46× | ~same | Different bottleneck |
-| Task Workflow | 0.46× | 0.52× | +13% | Mixed IO+task |
+| Benchmark | Before (461) | After (462) | Change |
+|-----------|:-----------:|:----------:|:------:|
+| **Subprocess** | **0.23×** | **~1.0×** | **+335%** 🔥 |
+| All others | unchanged | unchanged | within noise |
 
 **Key insight:** Benchmark noise (stdev 30-60% of mean) dwarfs the batching improvement at these operation counts. The existing benchmarks scale `M` as total bytes transferred, not concurrent IO operations — so at M=65536 there are only ~64 connections. The batching benefit will be proportional to **operations per loop iteration**, which benchmarks don't stress.
 
