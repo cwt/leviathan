@@ -412,26 +412,102 @@ No workqueue needed — no context switch overhead.
 significantly. The remaining gap (~0.7× on TCP/Unix Echo) is likely from
 callback dispatch overhead (Zig→Python boundary per completion).
 
-**Key insight:** Benchmark noise (stdev 30-60% of mean) dwarfs the batching improvement at these operation counts. The existing benchmarks scale `M` as total bytes transferred, not concurrent IO operations — so at M=65536 there are only ~64 connections. The batching benefit will be proportional to **operations per loop iteration**, which benchmarks don't stress.
+---
 
-**Phase 2 (combined submit+wait) will compound this improvement** by eliminating the second syscall (copy_cqes also calls `io_uring_enter`).
+## 🔴 PRIORITY 15: Batch Dispatch Engine + Full io_uring — Architectural Redesign
 
-### Critical Discovery: Pointer Args in io_uring SQEs
+### Root Cause of 0.6-0.8× I/O Performance
 
-io_uring stores POINTERS in SQE fields that are dereferenced by the kernel at *submit time* (during `io_uring_enter`). If the SQE is prepped but submission is deferred to `poll_blocking_events()`, the pointer may point to freed stack memory:
+The current architecture processes completions one-at-a-time with per-completion Zig→Python crossings:
 
-| Operation | SQE field | Points to | Safe to defer? |
-|-----------|-----------|-----------|:--------------:|
-| POLL_ADD | sqe.addr = events mask (u32) | — (not a pointer) | ✅ Yes |
-| Shutdown | sqe.fd, sqe.off = how | — (not pointers) | ✅ Yes |
-| Read/Write | sqe.addr = buffer ptr | transport struct (heap) | ⚠️ Transport buffers are on heap — safe |
-| Timeout | sqe.addr = timespec ptr | **caller's stack** | ❌ **No — stack freed** |
-| Connect | sqe.addr = sockaddr ptr | **caller's stack** | ❌ **No — stack freed** |
-| Accept | sqe.addr/sqe.addr2 = addr/addrlen ptrs | **caller's stack** | ❌ **No — stack freed** |
-| RecvMsg/SendMsg | sqe.addr = msghdr ptr | heap-allocated transport data | ✅ Heap data, but keep immediate |
+```
+CQE → Zig callback → memcpy 48-byte Callback into ring buffer → pop → PyObject_Call → Python method
+```
 
-Currently only POLL_ADD and Shutdown are deferred. All others use immediate submission.
-This limits batching to poll operations (WaitReadable/WaitWritable), which are the most common per-connection operations.
+This means **1 Zig→Python boundary crossing per I/O completion**. For TCP Echo at M=65536:
+- 128 completions per batch (64 read + 64 write)
+- 128 Python crossings via `PyObject_CallOneArg(protocol.data_received, py_bytes)`
+- Each crossing: CPython builds args tuple, does type checks, calls method, returns
+
+**The fix:** Replace per-completion Python calls with batched dispatch. Zig writes completion records to a shared buffer, Python reads the batch and dispatches in a tight native loop.
+
+### Design: Completion Record Buffer
+
+```
+Current:                                      Proposed:
+                                                                    
+Zig: copy_cqes → fetch_completed_tasks        Zig: copy_cqes → fill CompletionRecord[64]  
+       → ring_buffer.push(Callback)                  → set ready_count atomic
+       → each callback does PyObject_Call     Python: read batch[0..ready_count]
+                                                     → for each: switch type → call method
+                                                     → clear batch
+```
+
+**CompletionRecord** (lightweight, no function pointers):
+```zig
+const CompletionRecord = struct {
+    operation: enum { DataReceived, EofReceived, ConnectionLost, 
+                     ResumeWriting, Accept, Connected, ... },
+    transport: ?*TransportObject,
+    data: union { bytes: *PyObject, nbytes: i64, error: ?*PyObject, ... },
+};
+```
+
+Instead of copying a 48-byte `Callback` struct (with function pointer, module_ptr, callback_ptr), we store just the operation type + transport pointer + data. Python reads this and calls the protocol method natively — no function pointer indirection.
+
+### Implementation Plan
+
+#### Phase 1: Completion Record Buffer (replaces callback_manager ring buffer for IO completions)
+
+| # | Task | Files | Expected |
+|---|------|-------|:--------:|
+| 15.1 | Define `CompletionRecord` union for all IO operation types | `io/completion.zig` | |
+| 15.2 | Replace `fetch_completed_tasks` — write `CompletionRecord` instead of pushing `Callback` | `runner.zig` | |
+| 15.3 | Add Python-accessible batch buffer (`CompletionRecord[N]` + `ready_count` atomic) | `loop/main.zig` | |
+| 15.4 | Add Python-side dispatch loop: read batch, call protocol methods natively | `loop.py` | |
+| 15.5 | Route Python dispatch errors back to loop exception handler | `loop.py` | |
+| 15.6 | Keep callback_manager for non-IO tasks (call_soon, call_later, task wakeups) | — | No change for task dispatch |
+| 15.7 | Run full test suite + benchmarks | All | **Expected: 0.6-0.8× → 1.0-1.5×** |
+
+#### Phase 2: io_uring SQPOLL — Zero-Syscall Submission
+
+| # | Task | Files | Expected |
+|---|------|-------|:--------:|
+| 15.8 | Init io_uring with `IORING_SETUP_SQPOLL` + `IORING_SETUP_SQ_AFF` | `io/main.zig` | |
+| 15.9 | Remove `submit_guaranteed()` — SQPOLL kernel thread polls the SQ automatically | `io/main.zig`, all IO op files | |
+| 15.10 | Handle `IORING_SQ_NEED_WAKEUP` for idle/eventfd wake | `runner.zig` | |
+| 15.11 | Benchmark — measure syscall reduction | All | **Expected: 1.0-1.5× → 1.5-2.5×** |
+
+#### Phase 3: Registered Buffers + Fixed Files
+
+| # | Task | Files | Expected |
+|---|------|-------|:--------:|
+| 15.12 | Register transport read/write buffers with `io_uring_register_buffers` | `io/main.zig`, transport files | |
+| 15.13 | Use `IOSQE_FIXED_FILE` for hot-path socket operations | `read.zig`, `write.zig` | |
+| 15.14 | Pre-register eventfd + pidfds as fixed files | `io/main.zig`, `child_watcher.zig` | |
+| 15.15 | Benchmark — measure buffer registration impact | All | **Expected: 1.5-2.5× → 2.0-3.5×** |
+
+#### Phase 4: Combined Submit+Wait + Full-Batch CQE Drain
+
+| # | Task | Files | Expected |
+|---|------|-------|:--------:|
+| 15.16 | Replace `flush_pending_sqes()` + `copy_cqes()` with combined `io_uring_enter(to_submit, wait_nr, GETEVENTS)` — one syscall instead of two | `runner.zig` | |
+| 15.17 | Drain ALL available CQEs per batch (not just batch_size) — `IORING_ENTER_GETEVENTS` with `wait_nr = 0` after first wake | `runner.zig` | |
+| 15.18 | Benchmark | All | |
+
+### Expected Impact (M=65536)
+
+| Benchmark | Current (467) | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
+|-----------|:------------:|:-------:|:-------:|:-------:|:-------:|
+| **TCP Echo** | **0.78×** | 1.2× | 1.8× | 2.5× | **3.0×** |
+| **UDP Ping-Pong** | **1.12×** | 1.5× | 2.0× | 3.0× | **3.5×** |
+| Socket Ops | 0.63× | 1.0× | 1.5× | 2.5× | **3.0×** |
+| Chat | 0.98× | 1.0× | 1.2× | 1.5× | **1.8×** |
+| Subprocess | 1.00× | 1.0× | 1.0× | 1.2× | **1.5×** |
+
+**Total expected improvement:** 0.6-0.8× → **3-5×** asyncio, matching or beating uvloop.
+
+Leviathan finally leverages io_uring's true advantage: zero-syscall submission, registered buffers, fixed files, and batched completion dispatch — all without per-completion Python boundary crossings.
 
 ---
 
