@@ -44,6 +44,13 @@ pub fn recvmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Rec
     const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
+    // Flush SQE to kernel ring for immediate visibility. The kernel monitors
+    // the shared SQ tail and will pick up this SQE on the next io_uring_enter
+    // that waits for completions (e.g., submit_and_wait in poll_blocking_events).
+    // This is NOT an io_uring_enter syscall — just a user-space memcpy to the
+    // kernel's shared ring buffer. The actual submit+wait happens later in batch.
+    _ = ring.flush_sq();
+
     // Deferred: msghdr is heap-allocated in transport struct (SockRecvFromData).
     // Flushed by poll_blocking_events() or auto-flush in queue().
     return @intFromPtr(data_ptr);

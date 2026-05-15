@@ -52,6 +52,10 @@ pub fn sendmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Sen
     const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
     sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
+    // Flush SQE to kernel ring for immediate visibility.
+    // User-space atomic store, not a syscall.
+    _ = ring.flush_sq();
+
     // Deferred: msghdr_const is heap-allocated in transport struct (SockSendToData).
     return @intFromPtr(data_ptr);
 }
