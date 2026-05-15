@@ -49,8 +49,7 @@ pub fn sendmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Sen
     const data_ptr = try set.push(.PerformSendMsg, &data.callback);
     errdefer data_ptr.discard();
 
-    const sqe = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
-    sqe.flags |= std.os.linux.IOSQE_ASYNC;
+    _ = try ring.sendmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
 
     // Flush SQE to kernel ring for immediate visibility.
     // User-space atomic store, not a syscall.
@@ -83,14 +82,11 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
                 @as(*const std.posix.msghdr_const, @ptrCast(&data_ptr.msg_storage)),
                 std.posix.MSG.ZEROCOPY,
             );
-            sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
             // Deferred: msg_storage and write_iov live in task_data_pool (heap).
-            // data.data.ptr points to transport's heap-allocated send buffer.
             break :blk sqe;
         }
         const sqe = try ring.write(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
-        sqe.flags |= std.os.linux.IOSQE_ASYNC;
         break :blk sqe;
     };
 
@@ -123,14 +119,11 @@ pub fn perform_with_iovecs(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSe
                 @as(*const std.posix.msghdr_const, @ptrCast(&data_ptr.msg_storage)),
                 std.posix.MSG.ZEROCOPY,
             );
-            sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
             // Deferred: msg_storage lives in task_data_pool.
-            // iovecs in data.data.ptr are heap-allocated from transport.
             break :blk sqe;
         }
         const sqe = try ring.writev(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
-        sqe.flags |= std.os.linux.IOSQE_ASYNC;
         break :blk sqe;
     };
 

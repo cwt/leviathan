@@ -41,8 +41,9 @@ pub fn recvmsg(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Rec
     const data_ptr = try set.push(.PerformRecvMsg, &data.callback);
     errdefer data_ptr.discard();
 
-    const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
-    sqe.flags |= std.os.linux.IOSQE_ASYNC;
+    _ = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, data.msg, data.flags);
+    // No IOSQE_ASYNC: recvmsg on non-blocking socket returns EAGAIN inline,
+    // kernel auto-installs poll callback — no workqueue context switch needed.
 
     // Flush SQE to kernel ring for immediate visibility. The kernel monitors
     // the shared SQ tail and will pick up this SQE on the next io_uring_enter
@@ -75,20 +76,17 @@ pub fn perform(ring: *std.os.linux.IoUring, set: *IO.BlockingTasksSet, data: Per
                 },
                 .buffer => {
                     const sqe = try ring.read(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
-                    sqe.flags |= std.os.linux.IOSQE_ASYNC;
                     break :blk sqe;
                 }
             }
 
             const sqe = try ring.recvmsg(@intCast(@intFromPtr(data_ptr)), data.fd, &data_ptr.msg_storage, std.posix.MSG.ZEROCOPY);
-            sqe.flags |= std.os.linux.IOSQE_ASYNC;
 
             // Deferred: msg_storage lives in task_data_pool (heap).
             // iovecs point to transport's heap-allocated recv buffer.
             break :blk sqe;
         }
         const sqe = try ring.read(@intCast(@intFromPtr(data_ptr)), data.fd, data.data, data.offset);
-        sqe.flags |= std.os.linux.IOSQE_ASYNC;
         break :blk sqe;
     };
 
