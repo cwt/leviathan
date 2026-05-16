@@ -432,26 +432,40 @@ All 268 tests pass on all 4 Pythons (3.13, 3.14, 3.13t, 3.14t).
 | `src/transports/read_transport.zig` | `perform()`: sets `module_ptr` to `parent_transport` for batch routing; added `batch_dispatched` flag |
 | `src/transports/stream/read.zig` | Skip Python protocol call when `batch_dispatched` is true; still re-queues read |
 | `src/callback_manager.zig` | Added `batch_dispatched` flag to `CallbackData` |
-| `leviathan/loop.py` | `_dispatch_completions()`, `_dispatch_data_received()`, `_dispatch_eof_received()`, `_dispatch_connection_lost()` |
+| `leviathan/loop.py` | `_dispatch_completions()`, `_dispatch_completions_with_list()`, `_dispatch_data_received()`, `_dispatch_eof_received()`, `_dispatch_buffer_updated()`, `_dispatch_connection_lost()` |
 | `src/loop/python/constructors.zig` | `loop_traverse`: visits `completion_batch` for GC safety |
 
-### Phase 2: Batch Insertion — ⚠️ BLOCKED (2026-05-16)
+### Phase 2: Batch Dispatch — ⚠️ BLOCKED (2026-05-16)
 
-Batch insertion logic implemented in `fetch_completed_tasks` but disabled due to deadlock.
+Batch insertion and dispatch infrastructure complete, but dispatch disabled due to heap corruption.
 
-**Root cause:** When `protocol.data_received()` is called from `_dispatch_completions`, it tries to
+**Root cause 1 (deadlock):** When `protocol.data_received()` is called from `_dispatch_completions`, it tries to
 schedule work on the event loop (e.g., `StreamReader.feed_data()` → `loop.call_soon()`). But the
 loop mutex is already held by the main loop runner, causing a deadlock.
 
+**Fix attempted:** Move `dispatch_completion_batch` to after `mutex.unlock()` in the main loop.
+This resolves the deadlock but exposes a deeper issue.
+
+**Root cause 2 (heap corruption):** Passing raw `CompletionRecord*` pointer to Python and reading
+via `ctypes.string_at()` causes segfaults after ~60 tests. The corruption manifests in unrelated
+code (pathlib, threading, pytest internals), suggesting Python memory allocator corruption.
+
 **Attempted fixes:**
-- Direct call: `protocol.data_received(data)` → deadlocks in `call_soon`
-- `self.call_soon(protocol.data_received, data)` → also deadlocks (mutex already held)
-- Deferred queue: schedule after batch, then call → still deadlocks for `StreamReaderProtocol`
+- Direct pointer passing + `ctypes.string_at` → heap corruption segfault
+- Building Python list of tuples in Zig → no segfault, but BufferedProtocol tests hang (next read not queued)
+- Simple Python call (no pointer passing) → works fine, 268 tests pass
+
+**Key finding:** The issue is specifically with passing raw struct pointers from Zig to Python.
+Simple Python calls from Zig work fine. The `ctypes.string_at` approach corrupts the heap.
 
 **Next steps:** Need to either:
-1. Release loop mutex before batch dispatch (complex, may break other invariants)
-2. Use a separate "post-dispatch" queue that's processed after mutex is released
-3. Have Zig call protocol methods directly instead of going through Python (requires Zig-side protocol access)
+1. Pass data as Python objects (PyTuple/PyList) instead of raw pointers — avoids ctypes entirely
+2. Use `memoryview` or `ctypes.Structure` with proper alignment instead of `string_at`
+3. Have Zig build Python tuples for each record and pass as a list (partially implemented in `_dispatch_completions_with_list`)
+
+**Additional issue:** For batched reads, the next read operation must be queued after dispatch.
+Currently `read_operation_completed` handles this for non-batch path, but batch path skips it.
+Need to queue next read in `dispatch_completion_batch` or `fetch_completed_tasks`.
 
 ### Root Cause of 0.6-0.8× I/O Performance
 

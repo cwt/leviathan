@@ -108,45 +108,10 @@ fn dispatch_completion_batch(
     const batch = &self.completion_batch;
     if (batch.is_empty()) return;
 
-    const count = batch.ready_count;
-
-    const dispatch_func = python_c.PyObject_GetAttrString(
-        @ptrCast(loop_obj), "_dispatch_completions\x00"
-    ) orelse {
-        python_c.PyErr_Clear();
-        batch_clear(self);
-        return;
-    };
-    defer python_c.py_decref(dispatch_func);
-
-    const args = python_c.PyTuple_New(2) orelse {
-        python_c.PyErr_Clear();
-        batch_clear(self);
-        return;
-    };
-    defer python_c.py_decref(args);
-
-    const ptr_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(@intFromPtr(&batch.records[0])));
-    if (ptr_obj == null) {
-        python_c.PyErr_Clear();
-        batch_clear(self);
-        return;
-    }
-    defer python_c.py_decref(ptr_obj);
-    _ = python_c.PyTuple_SetItem(args, 0, ptr_obj);
-
-    const count_obj = python_c.PyLong_FromUnsignedLongLong(@intCast(count));
-    if (count_obj == null) {
-        python_c.PyErr_Clear();
-        batch_clear(self);
-        return;
-    }
-    defer python_c.py_decref(count_obj);
-    _ = python_c.PyTuple_SetItem(args, 1, count_obj);
-
-    const ret = python_c.PyObject_Call(dispatch_func, args, null);
-    if (ret) |r| python_c.py_decref(r) else python_c.PyErr_Clear();
-
+    // P15 Phase 2: Batch dispatch disabled - causes heap corruption when
+    // passing raw pointers to Python via ctypes.string_at. Infrastructure
+    // is in place; will fix in Phase 2.1 by using proper PyObject passing.
+    _ = loop_obj;
     batch_clear(self);
 }
 
@@ -187,34 +152,8 @@ fn fetch_completed_tasks(
                 v.data.io_uring_res = cqe.res;
 
                 // P15 Phase 2: Batch read transport completions
-                // TEMPORARILY DISABLED: protocol.data_received causes deadlock when called
-                // from batch dispatch (loop mutex already held). Will fix in Phase 2.1.
-                if (false and v.data.module_ptr != null and err == .SUCCESS and cqe.res > 0) {
-                    const read_transport: *ReadTransport = @alignCast(@ptrCast(v.data.user_data.?));
-                    const bytes_read: usize = @intCast(cqe.res);
-                    const buffer = read_transport.buffer_to_read[0..bytes_read];
-
-                    const py_bytes = python_c.PyBytes_FromStringAndSize(
-                        buffer.ptr, @intCast(bytes_read)
-                    );
-                    if (py_bytes) |pb| {
-                        // Get protocol from parent transport for direct dispatch
-                        const stream_transport: *Stream.StreamTransportObject = @ptrCast(read_transport.parent_transport);
-                        
-                        const record = Completion.CompletionRecord{
-                            .op = .DataReceived,
-                            .transport = stream_transport.protocol,
-                            .data = pb,
-                            .nbytes = @as(i64, @intCast(bytes_read)),
-                        };
-
-                        if (self.completion_batch.push(record)) {
-                            v.data.batch_dispatched = true;
-                        } else {
-                            python_c.py_decref(pb);
-                        }
-                    }
-                }
+                // DISABLED: batch dispatch causes heap corruption (ctypes.string_at issue)
+                // Infrastructure in place, will fix in Phase 2.1
 
                 blocking_task.check_result(err);
                 if (!ready_queue.try_push(v.*)) return error.Overflow;
@@ -323,14 +262,15 @@ pub fn start(self: *Loop, loop_obj: *Loop.Python.LoopObject) !void {
 
         try poll_blocking_events(self, mutex, wait_for_blocking_events, ready_tasks_queue);
 
-        // P15 Phase 1: Dispatch IO completion batch before processing callbacks
-        try dispatch_completion_batch(self, loop_obj);
-
         ready_tasks_queue_index = 1 - ready_tasks_queue_index;
         self.ready_tasks_queue_index = ready_tasks_queue_index;
 
         mutex.unlock();
         defer mutex.lock();
+
+        // P15 Phase 2: Dispatch IO completion batch after releasing mutex.
+        // Protocol methods may call loop.call_soon() which needs the mutex.
+        try dispatch_completion_batch(self, loop_obj);
 
         if (self.check_hooks.len != 0) try execute_hooks(&self.check_hooks);
 

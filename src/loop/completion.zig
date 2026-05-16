@@ -6,13 +6,14 @@ const PyObject = *python_c.PyObject;
 /// for transport operations. Python reads these in a batch and dispatches
 /// protocol methods directly, eliminating per-completion Zig→Python crossings.
 pub const CompletionOp = enum(u8) {
-    DataReceived,       // transport.protocol_data_received(transport, bytes)
-    EofReceived,        // transport.protocol_eof_received(transport)
-    ConnectionMade,     // transport.protocol_connection_made(transport)
-    ConnectionLost,     // transport.protocol_connection_lost(transport, exc)
-    ResumeWriting,      // transport.protocol_resume_writing(transport)
-    DatagramReceived,   // protocol.datagram_received(transport, data, addr)
-    ErrorReceived,      // protocol.error_received(transport, exc)
+    DataReceived,       // protocol.data_received(bytes)
+    EofReceived,        // protocol.eof_received()
+    BufferUpdated,      // protocol.buffer_updated(nbytes)
+    ConnectionMade,     // protocol.connection_made(transport)
+    ConnectionLost,     // protocol.connection_lost(exc)
+    ResumeWriting,      // protocol.resume_writing()
+    DatagramReceived,   // protocol.datagram_received(data, addr)
+    ErrorReceived,      // protocol.error_received(exc)
 };
 
 /// Single completion record — 32 bytes (vs 48-byte Callback).

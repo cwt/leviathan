@@ -196,48 +196,76 @@ class Loop(_Loop):
                 self._dispatch_data_received(transport_ptr, data_ptr, nbytes)
             elif op == 1:  # EofReceived
                 self._dispatch_eof_received(transport_ptr)
+            elif op == 2:  # BufferUpdated
+                self._dispatch_buffer_updated(transport_ptr, nbytes)
             elif op == 3:  # ConnectionLost
                 self._dispatch_connection_lost(transport_ptr, data_ptr)
 
+    def _dispatch_completions_with_list(self, records: list) -> None:
+        """Dispatch IO completions from a list of (op, transport_ptr, data, nbytes) tuples."""
+        import _ctypes
+        for op, transport_ptr, data, nbytes in records:
+            if op == 0:  # DataReceived
+                self._dispatch_data_received(transport_ptr, data, nbytes)
+            elif op == 1:  # EofReceived
+                self._dispatch_eof_received(transport_ptr)
+            elif op == 2:  # BufferUpdated
+                self._dispatch_buffer_updated(transport_ptr, nbytes)
+            elif op == 3:  # ConnectionLost
+                self._dispatch_connection_lost(transport_ptr, data)
+
     def _dispatch_data_received(self, transport_ptr: int, data_ptr: int, nbytes: int) -> None:
         """Call protocol.data_received on a transport."""
-        import ctypes
-        py_obj = ctypes.py_object.from_address(data_ptr)
-        transport = ctypes.py_object.from_address(transport_ptr).value
+        import _ctypes
+        protocol = _ctypes.PyObj_FromPtr(transport_ptr)
+        data = _ctypes.PyObj_FromPtr(data_ptr)
         try:
-            transport._protocol.data_received(py_obj.value)
+            protocol.data_received(data)
         except Exception:
             self.call_exception_handler({
                 "message": "Exception in data_received callback",
                 "exception": Exception("data_received failed"),
-                "transport": transport,
+                "protocol": protocol,
             })
 
     def _dispatch_eof_received(self, transport_ptr: int) -> None:
         """Call protocol.eof_received on a transport."""
-        import ctypes
-        transport = ctypes.py_object.from_address(transport_ptr).value
+        import _ctypes
+        protocol = _ctypes.PyObj_FromPtr(transport_ptr)
         try:
-            transport._protocol.eof_received()
+            protocol.eof_received()
         except Exception:
             self.call_exception_handler({
                 "message": "Exception in eof_received callback",
                 "exception": Exception("eof_received failed"),
-                "transport": transport,
+                "protocol": protocol,
+            })
+
+    def _dispatch_buffer_updated(self, transport_ptr: int, nbytes: int) -> None:
+        """Call protocol.buffer_updated on a BufferedProtocol."""
+        import _ctypes
+        protocol = _ctypes.PyObj_FromPtr(transport_ptr)
+        try:
+            protocol.buffer_updated(nbytes)
+        except Exception:
+            self.call_exception_handler({
+                "message": "Exception in buffer_updated callback",
+                "exception": Exception("buffer_updated failed"),
+                "protocol": protocol,
             })
 
     def _dispatch_connection_lost(self, transport_ptr: int, exc_ptr: int) -> None:
         """Call protocol.connection_lost on a transport."""
-        import ctypes
-        exc = ctypes.py_object.from_address(exc_ptr).value if exc_ptr else None
-        transport = ctypes.py_object.from_address(transport_ptr).value
+        import _ctypes
+        exc = _ctypes.PyObj_FromPtr(exc_ptr) if exc_ptr else None
+        protocol = _ctypes.PyObj_FromPtr(transport_ptr)
         try:
-            transport._protocol.connection_lost(exc)
+            protocol.connection_lost(exc)
         except Exception:
             self.call_exception_handler({
                 "message": "Exception in connection_lost callback",
                 "exception": Exception("connection_lost failed"),
-                "transport": transport,
+                "protocol": protocol,
             })
 
     # --------------------------------------------------------------------------------------------------------
